@@ -200,7 +200,7 @@ export default function App() {
       onMessage: handleChannelMessage,
       onSignal: sendSignal,
       onStateChange: (state) => {
-        if (state === 'data-channel-open') {
+        if (state === 'data-channel-open' || state === 'connected') {
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId });
           showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || 'device'}.`);

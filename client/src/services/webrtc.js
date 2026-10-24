@@ -6,29 +6,12 @@ export function getIceServers() {
         return parsed;
       }
     } catch {
-      // Fall back to default STUN + TURN servers if environment variable is not valid JSON
+      // Fall back to default STUN
     }
   }
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    // Free open TURN relay for symmetric NAT traversal
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ];
 }
 
@@ -65,38 +48,85 @@ export class WebRtcSession {
   async start() {
     activeSession = this;
     this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
+
+    // Trickle ICE: emit each candidate immediately the moment it is generated
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        this.onSignal('ice-candidate', event.candidate);
+        const candidatePayload = event.candidate.toJSON ? event.candidate.toJSON() : event.candidate;
+        this.onSignal('ice-candidate', candidatePayload);
       }
     };
+
     this.peerConnection.onconnectionstatechange = () => {
       const state = this.peerConnection?.connectionState;
-      this.onStateChange(state);
-      if (['failed', 'disconnected', 'closed'].includes(state)) {
+      console.log('⚡ WebRTC connectionState:', state);
+      if (state === 'connected') {
+        this.onStateChange('connected');
+      } else if (['failed', 'disconnected', 'closed'].includes(state)) {
+        this.onStateChange(state);
         this.onError?.(new Error(`WebRTC connection ${state}.`));
       }
     };
+
     this.peerConnection.oniceconnectionstatechange = () => {
       const state = this.peerConnection?.iceConnectionState;
-      if (['failed', 'disconnected'].includes(state)) {
+      console.log('⚡ WebRTC iceConnectionState:', state);
+      if (state === 'connected' || state === 'completed') {
+        if (this.dataChannel?.readyState === 'open') {
+          this.onStateChange('data-channel-open');
+        }
+      } else if (['failed', 'disconnected'].includes(state)) {
         this.onStateChange(state);
         this.onError?.(new Error(`WebRTC ICE connection ${state}.`));
       }
     };
+
+    // Receiver side: attach incoming DataChannel
     this.peerConnection.ondatachannel = (event) => {
-      this.#attachDataChannel(event.channel);
+      console.log('⚡ WebRTC ondatachannel received on receiver!');
+      this.setupDataChannelEvents(event.channel);
     };
 
+    // Initiator side: create DataChannel immediately
     if (this.role === 'initiator') {
       const channel = this.peerConnection.createDataChannel('fileTransfer', {
         ordered: true
       });
-      this.#attachDataChannel(channel);
+      this.setupDataChannelEvents(channel);
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
       this.onSignal('offer', this.peerConnection.localDescription);
     }
+  }
+
+  setupDataChannelEvents(channel) {
+    if (!channel) return;
+    this.dataChannel = channel;
+    channel.binaryType = 'arraybuffer';
+    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
+
+    const onConnected = () => {
+      console.log('⚡ WebRTC DataChannel OPEN - Instant link ready!');
+      this.onStateChange('data-channel-open');
+    };
+
+    // Fast-path: if DataChannel is already open (common on receiver side)
+    if (channel.readyState === 'open') {
+      onConnected();
+    } else {
+      channel.onopen = onConnected;
+    }
+
+    channel.onclose = () => {
+      console.log('⚡ WebRTC DataChannel closed');
+      this.onStateChange('data-channel-closed');
+    };
+    channel.onerror = (event) => this.onError?.(event.error ?? new Error('Data channel error.'));
+    channel.onmessage = (event) => {
+      this.messageQueue = this.messageQueue
+        .then(() => this.onMessage(event.data))
+        .catch((error) => this.onError?.(error));
+    };
   }
 
   async handleRemoteCandidate(candidate) {
@@ -105,7 +135,8 @@ export class WebRtcSession {
       return;
     }
     try {
-      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
+      await this.peerConnection.addIceCandidate(iceCandidate);
     } catch (err) {
       console.error('Failed to add candidate:', err);
     }
@@ -115,7 +146,8 @@ export class WebRtcSession {
     while (this.candidateQueue.length > 0) {
       const candidate = this.candidateQueue.shift();
       try {
-        await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
+        await this.peerConnection.addIceCandidate(iceCandidate);
       } catch (err) {
         console.error('Failed to drain candidate:', err);
       }
@@ -165,19 +197,5 @@ export class WebRtcSession {
     if (activeSession === this) {
       activeSession = null;
     }
-  }
-
-  #attachDataChannel(channel) {
-    this.dataChannel = channel;
-    channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
-    channel.onopen = () => this.onStateChange('data-channel-open');
-    channel.onclose = () => this.onStateChange('data-channel-closed');
-    channel.onerror = (event) => this.onError?.(event.error ?? new Error('Data channel error.'));
-    channel.onmessage = (event) => {
-      this.messageQueue = this.messageQueue
-        .then(() => this.onMessage(event.data))
-        .catch((error) => this.onError?.(error));
-    };
   }
 }
