@@ -34,6 +34,7 @@ export default function App() {
   const incomingTransferRef = useRef(null);
   const currentPairingIdRef = useRef(null);
   const connectionTimeoutRef = useRef(null);
+  const pendingSignalsRef = useRef([]);
   const pairPeerId = useMemo(() => new URLSearchParams(window.location.search).get('pair'), []);
   const autoPairRequestedRef = useRef(false);
 
@@ -57,6 +58,7 @@ export default function App() {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
+    pendingSignalsRef.current = [];
     incomingTransferRef.current?.resolve(null);
     incomingTransferRef.current = null;
     sessionRef.current?.close();
@@ -144,9 +146,29 @@ export default function App() {
   const sendSignal = useCallback((type, data) => {
     const pairingId = currentPairingIdRef.current;
     if (pairingId) {
-      emitSocket('webrtc_signal', { pairingId, type, data });
+      const payload = { pairingId, type, data, signal: data };
+      emitSocket('webrtc_signal', payload);
+      emitSocket('signal', payload);
     }
   }, []);
+
+  const handleIncomingSignal = useCallback(async (payload) => {
+    const signalType = payload.type || payload.signal?.type;
+    const signalData = payload.data !== undefined ? payload.data : payload.signal;
+
+    if (!sessionRef.current) {
+      console.log(`[WebRTC] Session not ready yet. Buffering signal: ${signalType}`);
+      pendingSignalsRef.current.push({ type: signalType, data: signalData });
+      return;
+    }
+
+    try {
+      await sessionRef.current.handleSignal(signalType, signalData);
+    } catch (error) {
+      console.error('[WebRTC] Signal handling error:', error);
+      showNotice('error', error.message || 'Could not complete the WebRTC handshake.');
+    }
+  }, [showNotice]);
 
   const handleChannelMessage = useCallback(async (data) => {
     if (typeof data === 'string') {
@@ -235,6 +257,18 @@ export default function App() {
     });
     sessionRef.current = session;
     await session.start();
+
+    if (pendingSignalsRef.current.length > 0) {
+      console.log(`[WebRTC] Draining ${pendingSignalsRef.current.length} buffered early signaling packets`);
+      while (pendingSignalsRef.current.length > 0) {
+        const { type, data } = pendingSignalsRef.current.shift();
+        try {
+          await session.handleSignal(type, data);
+        } catch (err) {
+          console.error('[WebRTC] Error handling early buffered signal:', err);
+        }
+      }
+    }
   }, [handleChannelMessage, selectedPeer?.deviceName, sendSignal, showNotice]);
 
   const handlePairingConfirmed = useCallback(async (payload) => {
@@ -317,13 +351,8 @@ export default function App() {
         showNotice('info', `The ${payload.approvedByRole === 'requester' ? 'requesting' : 'receiving'} device approved. Confirm on your screen to continue.`);
       }),
       onSocketEvent('pairing_confirmed', handlePairingConfirmed),
-      onSocketEvent('webrtc_signal', async (payload) => {
-        try {
-          await sessionRef.current?.handleSignal(payload.type, payload.data);
-        } catch (error) {
-          showNotice('error', error.message || 'Could not complete the WebRTC handshake.');
-        }
-      }),
+      onSocketEvent('webrtc_signal', handleIncomingSignal),
+      onSocketEvent('signal', handleIncomingSignal),
       onSocketEvent('connection_ready', (payload) => {
         setSelectedPeer(payload);
         setConnectionState('connected');

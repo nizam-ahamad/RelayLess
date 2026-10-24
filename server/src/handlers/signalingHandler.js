@@ -177,8 +177,10 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
       }
     });
 
-    socket.on('webrtc_signal', (payload = {}) => {
-      const otherSocketId = peerManager.otherSocketId(payload.pairingId, socket.id);
+    const handleSignalRelay = (payload = {}) => {
+      const pairingId = payload.pairingId || peerManager.getBySocketId(socket.id)?.pairingId;
+      const otherSocketId = payload.targetSocketId || (pairingId ? peerManager.otherSocketId(pairingId, socket.id) : null);
+
       if (!otherSocketId) {
         socket.emit('pairing_error', {
           code: 'SIGNALING_NOT_AVAILABLE',
@@ -187,14 +189,34 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return;
       }
 
-      console.log(`[Signaling] Relaying '${payload.type}' from ${socket.id} to ${otherSocketId} (pairing: ${payload.pairingId})`);
+      if (pairingId) {
+        const pairing = peerManager.getPairing(pairingId);
+        if (!pairing || ![pairing.requesterSocketId, pairing.targetSocketId].includes(socket.id)) {
+          return;
+        }
+      }
 
-      io.to(otherSocketId).emit('webrtc_signal', {
-        pairingId: payload.pairingId,
-        type: payload.type,
-        data: payload.data
-      });
-    });
+      const signalType = payload.type || payload.signal?.type || (payload.signal?.candidate ? 'candidate' : 'signal');
+      console.log(`[Signaling] Relaying '${signalType}' from ${socket.id} to ${otherSocketId} (pairing: ${pairingId})`);
+
+      const relayData = payload.data !== undefined ? payload.data : payload.signal;
+      const relaySignal = payload.signal !== undefined ? payload.signal : payload.data;
+
+      const envelope = {
+        pairingId,
+        senderSocketId: socket.id,
+        targetSocketId: otherSocketId,
+        type: signalType,
+        data: relayData,
+        signal: relaySignal
+      };
+
+      io.to(otherSocketId).emit('webrtc_signal', envelope);
+      io.to(otherSocketId).emit('signal', envelope);
+    };
+
+    socket.on('webrtc_signal', handleSignalRelay);
+    socket.on('signal', handleSignalRelay);
 
     socket.on('webrtc_ready', (payload = {}) => {
       try {
