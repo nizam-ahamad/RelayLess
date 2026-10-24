@@ -15,7 +15,7 @@ const clientDist = join(projectRoot, 'client', 'dist');
 const port = Number(process.env.PORT ?? 3001);
 const pinTtlMs = Number(process.env.PIN_TTL_MS ?? 120_000);
 const defaultOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173'];
-const configuredOrigins = String(process.env.CLIENT_ORIGIN ?? '*')
+const configuredOrigins = String(process.env.CLIENT_ORIGIN ?? '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -23,7 +23,13 @@ const configuredOrigins = String(process.env.CLIENT_ORIGIN ?? '*')
 const allowedOrigins = Array.from(new Set([...defaultOrigins, ...configuredOrigins.filter((o) => o !== '*')]));
 
 const corsOptions = {
-  origin: configuredOrigins.includes('*') ? true : allowedOrigins,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:') || configuredOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST']
 };

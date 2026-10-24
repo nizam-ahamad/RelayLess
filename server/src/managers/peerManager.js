@@ -78,8 +78,8 @@ export class PeerManager {
     if (!target) {
       throw this.#error('TARGET_NOT_FOUND', 'No device was found for that PIN or QR link.');
     }
-    if (target.socketId === requester.socketId) {
-      throw this.#error('SELF_PAIRING', 'Choose a different device.');
+    if (target.socketId === requester.socketId || target.peerId === requester.peerId) {
+      throw this.#error('SELF_PAIRING', 'Cannot pair with your own device');
     }
     if (target.pairingId) {
       throw this.#error('TARGET_BUSY', 'That device is already pairing with someone else.');

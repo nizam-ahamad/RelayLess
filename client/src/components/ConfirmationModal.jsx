@@ -1,5 +1,5 @@
-export default function ConfirmationModal({ prompt, onAccept, onReject, hasAccepted, isOpen = true }) {
-  if (!prompt || !isOpen) {
+export default function ConfirmationModal({ prompt, onAccept, onReject, hasAccepted }) {
+  if (!prompt) {
     return null;
   }
 

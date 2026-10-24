@@ -21,30 +21,44 @@ export function registerSignalingHandlers(io, peerManager) {
       peerManager.setDeviceName(socket.id, deviceName);
 
       try {
+        const requester = peerManager.getBySocketId(socket.id);
+        const target = targetPeerId
+          ? peerManager.getByPeerId(targetPeerId)
+          : (pin ? peerManager.getByPin(pin) : null);
+
+        if (target && requester && (target.socketId === requester.socketId || target.peerId === requester.peerId)) {
+          const response = {
+            message: 'Cannot pair with your own device'
+          };
+          socket.emit('pairing_error', response);
+          acknowledgement?.({ ok: false, ...response });
+          return;
+        }
+
         const pairing = peerManager.createPairing(socket.id, {
           peerId: targetPeerId,
           pin
         });
         const participants = peerManager.getPairingPeers(pairing.pairingId);
-        const requester = participants.requester;
-        const target = participants.target;
+        const requesterPeer = participants.requester;
+        const targetPeer = participants.target;
         const prompt = {
           pairingId: pairing.pairingId,
           confirmationCode: pairing.confirmationCode,
           expiresIn: 120,
-          requester: pairingParticipant(requester, target),
-          target: pairingParticipant(target, requester)
+          requester: pairingParticipant(requesterPeer, targetPeer),
+          target: pairingParticipant(targetPeer, requesterPeer)
         };
 
-        io.to(requester.socketId).emit('pairing_prompt', {
+        io.to(requesterPeer.socketId).emit('pairing_prompt', {
           ...prompt,
           role: 'requester',
-          otherDeviceName: target.deviceName
+          otherDeviceName: targetPeer.deviceName
         });
-        io.to(target.socketId).emit('pairing_prompt', {
+        io.to(targetPeer.socketId).emit('pairing_prompt', {
           ...prompt,
           role: 'target',
-          otherDeviceName: requester.deviceName
+          otherDeviceName: requesterPeer.deviceName
         });
         acknowledgement?.({ ok: true, pairingId: pairing.pairingId });
       } catch (error) {

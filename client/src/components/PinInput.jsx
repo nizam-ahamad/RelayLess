@@ -1,10 +1,11 @@
-export default function PinInput({ value, onChange, onSubmit, disabled }) {
+export default function PinInput({ value, onChange, onSubmit, disabled, hasError }) {
   return (
     <form className="pin-form" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
       <label htmlFor="pin-input">Enter pairing PIN</label>
       <div className="pin-row">
         <input
           id="pin-input"
+          className={hasError ? 'input-error' : ''}
           inputMode="text"
           autoComplete="one-time-code"
           maxLength={6}

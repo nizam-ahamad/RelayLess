@@ -39,3 +39,22 @@ test('creates a mutual pairing and only completes after both accept', () => {
   assert.equal(manager.getByPeerId(second.peerId).pairingId, null);
   pinManager.destroy();
 });
+
+test('rejects self-pairing in peerManager.createPairing', () => {
+  const pinManager = new PinManager({ ttlMs: 1000 });
+  const manager = new PeerManager({ pinManager });
+  const user = manager.register('socket-self');
+
+  assert.throws(
+    () => manager.createPairing('socket-self', { pin: user.pin }),
+    (err) => err.code === 'SELF_PAIRING' && err.message === 'Cannot pair with your own device'
+  );
+
+  assert.throws(
+    () => manager.createPairing('socket-self', { peerId: user.peerId }),
+    (err) => err.code === 'SELF_PAIRING' && err.message === 'Cannot pair with your own device'
+  );
+
+  manager.destroy();
+  pinManager.destroy();
+});

@@ -116,3 +116,40 @@ test('emits pairing_confirmed to both peers with deterministic WebRTC roles', ()
   peerManager.destroy();
   pinManager.destroy();
 });
+
+test('rejects self-pairing attempt and emits pairing_error', () => {
+  const pinManager = new PinManager({ ttlMs: 1000 });
+  const peerManager = new PeerManager({ pinManager });
+  const io = new FakeIo();
+  registerSignalingHandlers(io, peerManager);
+
+  const socket = new FakeSocket('socket-self');
+  io.connect(socket);
+
+  const peer = socket.latest('peer_ready');
+
+  // Attempt pairing with own PIN
+  let ackResult = null;
+  socket.receive('request_pairing', {
+    pin: peer.pin,
+    deviceName: 'Self'
+  }, (res) => { ackResult = res; });
+
+  const error = socket.latest('pairing_error');
+  assert.equal(error?.message, 'Cannot pair with your own device');
+  assert.equal(ackResult?.ok, false);
+  assert.equal(ackResult?.message, 'Cannot pair with your own device');
+  assert.equal(socket.all('pairing_prompt').length, 0);
+
+  // Attempt pairing with own peerId
+  socket.receive('request_pairing', {
+    targetPeerId: peer.peerId,
+    deviceName: 'Self'
+  });
+  const error2 = socket.latest('pairing_error');
+  assert.equal(error2?.message, 'Cannot pair with your own device');
+  assert.equal(socket.all('pairing_prompt').length, 0);
+
+  peerManager.destroy();
+  pinManager.destroy();
+});

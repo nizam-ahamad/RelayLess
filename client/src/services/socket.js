@@ -1,8 +1,7 @@
 import { io } from 'socket.io-client';
 
-// In dev with Vite proxy, io() connects to window.location.host; 
-// support VITE_SERVER_URL fallback for production.
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || undefined;
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+
 export const socket = io(SERVER_URL, {
   transports: ['websocket', 'polling']
 });

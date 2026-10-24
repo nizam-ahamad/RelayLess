@@ -72,6 +72,7 @@ button:disabled, input:disabled { cursor: not-allowed; opacity: 0.55; }
 .text-input, .pin-row input { width: 100%; border: 1px solid rgba(155, 178, 207, 0.2); border-radius: 7px; background: rgba(3, 11, 22, 0.28); color: white; outline: none; transition: border-color 0.2s, background 0.2s; }
 .text-input { padding: 11px 12px; margin: 8px 0 25px; font-size: 13px; }
 .text-input:focus, .pin-row input:focus { border-color: var(--mint); background: rgba(3, 11, 22, 0.5); }
+.pin-row input.input-error { border-color: var(--danger); box-shadow: 0 0 0 2px rgba(255, 124, 140, 0.25); }
 .pin-display { font-family: 'DM Mono', monospace; letter-spacing: 0.14em; color: var(--orange); font-size: 30px; margin-top: 7px; }
 .pin-expiry { display: flex; align-items: center; gap: 11px; margin-top: 14px; color: var(--muted-2); line-height: 1.5; font-size: 10px; }
 .ring { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--orange) var(--progress), rgba(255, 184, 107, 0.12) 0); position: relative; }

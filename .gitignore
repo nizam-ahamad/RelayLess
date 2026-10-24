@@ -8,3 +8,4 @@ client/dist/
 *.log
 .DS_Store
 omnirush.json
+.opencode/

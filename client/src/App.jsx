@@ -18,6 +18,7 @@ export default function App() {
   const [connectionState, setConnectionState] = useState('connecting');
   const [deviceName, setDeviceName] = useState(() => localStorage.getItem('p2p-device-name') || DEFAULT_DEVICE_NAME);
   const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
   const [pinSeconds, setPinSeconds] = useState(120);
   const [prompt, setPrompt] = useState(null);
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
@@ -313,19 +314,32 @@ export default function App() {
     if (normalized.length !== 6) {
       return;
     }
+    const myPin = peer?.pin ? peer.pin.trim().toUpperCase() : null;
+    if (myPin && normalized === myPin) {
+      setPinError(true);
+      setPinInput('');
+      showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
+      return;
+    }
+    setPinError(false);
     emitSocket('request_pairing', {
       pin: normalized,
       deviceName
     });
     setConnectionState('requesting');
     setPinInput('');
-  }, [deviceName, pinInput]);
+  }, [deviceName, peer?.pin, pinInput, showNotice]);
 
   const handleScanResult = useCallback((decoded) => {
     try {
       const url = new URL(decoded);
       const targetPeerId = url.searchParams.get('pair');
       if (targetPeerId) {
+        if (peer?.peerId && targetPeerId === peer.peerId) {
+          showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
+          setScannerOpen(false);
+          return;
+        }
         emitSocket('request_pairing', { targetPeerId, deviceName });
         setConnectionState('requesting');
         setScannerOpen(false);
@@ -334,12 +348,17 @@ export default function App() {
     } catch {
       // The QR may contain a raw peer ID; accept that as a convenience.
       if (decoded) {
+        if (peer?.peerId && decoded === peer.peerId) {
+          showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
+          setScannerOpen(false);
+          return;
+        }
         emitSocket('request_pairing', { targetPeerId: decoded, deviceName });
         setConnectionState('requesting');
         setScannerOpen(false);
       }
     }
-  }, [deviceName]);
+  }, [deviceName, peer?.peerId, showNotice]);
 
   const respondToPrompt = (accepted) => {
     if (!prompt) {
@@ -418,7 +437,7 @@ export default function App() {
   };
 
   const rotateProgress = Math.max(0, Math.min(100, (pinSeconds / 120) * 100));
-  const isConnected = connectionState === 'connected' || connectionState === 'connecting-peer';
+  const isConnected = connectionState === 'connected';
   const isBusy = ['requesting', 'pairing', 'connecting-peer'].includes(connectionState);
 
   return (
@@ -495,7 +514,16 @@ export default function App() {
                 <span className="step-number">02</span>
               </div>
               <p className="panel-intro">Enter the six-character PIN shown on the other device, or scan its QR code.</p>
-              <PinInput value={pinInput} onChange={setPinInput} onSubmit={() => handleConnect()} disabled={isBusy} />
+              <PinInput
+                value={pinInput}
+                onChange={(val) => {
+                  setPinError(false);
+                  setPinInput(val);
+                }}
+                onSubmit={() => handleConnect()}
+                disabled={isBusy}
+                hasError={pinError}
+              />
               <div className="or-divider"><span>or</span></div>
               <button className="scan-button" type="button" onClick={() => setScannerOpen(true)} disabled={isBusy}>
                 <span className="scan-button-icon">⌁</span>
@@ -533,7 +561,6 @@ export default function App() {
 
       <ConfirmationModal
         prompt={prompt}
-        isOpen={Boolean(prompt && !isConnected)}
         hasAccepted={waitingForAcceptance}
         onAccept={() => respondToPrompt(true)}
         onReject={() => respondToPrompt(false)}
