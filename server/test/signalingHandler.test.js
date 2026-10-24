@@ -1,0 +1,118 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { registerSignalingHandlers } from '../src/handlers/signalingHandler.js';
+import { PeerManager } from '../src/managers/peerManager.js';
+import { PinManager } from '../src/managers/pinManager.js';
+
+class FakeSocket {
+  constructor(id) {
+    this.id = id;
+    this.handlers = new Map();
+    this.events = [];
+  }
+
+  on(event, handler) {
+    this.handlers.set(event, handler);
+  }
+
+  emit(event, payload, acknowledgement) {
+    this.events.push({ event, payload });
+    if (acknowledgement) {
+      acknowledgement(payload);
+    }
+  }
+
+  receive(event, payload, acknowledgement) {
+    return this.handlers.get(event)?.(payload, acknowledgement);
+  }
+
+  latest(event) {
+    return [...this.events].reverse().find((entry) => entry.event === event)?.payload;
+  }
+
+  all(event) {
+    return this.events.filter((entry) => entry.event === event).map((entry) => entry.payload);
+  }
+}
+
+class FakeIo {
+  constructor() {
+    this.connectionHandler = null;
+    this.sockets = new Map();
+  }
+
+  on(event, handler) {
+    if (event === 'connection') {
+      this.connectionHandler = handler;
+    }
+  }
+
+  connect(socket) {
+    this.sockets.set(socket.id, socket);
+    this.connectionHandler(socket);
+  }
+
+  to(socketId) {
+    return {
+      emit: (event, payload) => this.sockets.get(socketId)?.emit(event, payload)
+    };
+  }
+}
+
+test('emits pairing_confirmed to both peers with deterministic WebRTC roles', () => {
+  const pinManager = new PinManager({ ttlMs: 1000 });
+  const peerManager = new PeerManager({ pinManager });
+  const io = new FakeIo();
+  registerSignalingHandlers(io, peerManager);
+
+  const requesterSocket = new FakeSocket('socket-a');
+  const targetSocket = new FakeSocket('socket-b');
+  io.connect(requesterSocket);
+  io.connect(targetSocket);
+
+  const requester = requesterSocket.latest('peer_ready');
+  const target = targetSocket.latest('peer_ready');
+  targetSocket.receive('set_device_name', { deviceName: 'Receiver' });
+
+  requesterSocket.receive('request_pairing', {
+    pin: target.pin,
+    deviceName: 'Sender'
+  });
+
+  const requesterPrompt = requesterSocket.latest('pairing_prompt');
+  const targetPrompt = targetSocket.latest('pairing_prompt');
+  assert.equal(requesterPrompt.pairingId, targetPrompt.pairingId);
+  assert.equal(requesterPrompt.confirmationCode, targetPrompt.confirmationCode);
+
+  requesterSocket.receive('pairing_response', {
+    pairingId: requesterPrompt.pairingId,
+    accepted: true
+  });
+  assert.equal(requesterSocket.all('pairing_confirmed').length, 0);
+  assert.equal(targetSocket.all('pairing_acknowledged').length, 1);
+
+  targetSocket.receive('pairing_response', {
+    pairingId: targetPrompt.pairingId,
+    accepted: true
+  });
+
+  const requesterConfirmation = requesterSocket.latest('pairing_confirmed');
+  const targetConfirmation = targetSocket.latest('pairing_confirmed');
+  assert.equal(requesterConfirmation.initiator, true);
+  assert.equal(requesterConfirmation.role, 'initiator');
+  assert.equal(targetConfirmation.initiator, false);
+  assert.equal(targetConfirmation.role, 'receiver');
+  assert.deepEqual(requesterConfirmation.confirmationState, {
+    requester: true,
+    target: true
+  });
+  assert.deepEqual(targetConfirmation.confirmationState, {
+    requester: true,
+    target: true
+  });
+  assert.equal(requesterConfirmation.peerId, target.peerId);
+  assert.equal(targetConfirmation.peerId, requester.peerId);
+
+  peerManager.destroy();
+  pinManager.destroy();
+});

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: relayless-p2p
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /ping
+    envVars:
+      - key: NODE_VERSION
+        value: 20

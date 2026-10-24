@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<script>
+  let serviceWorker = null;
+  let scope = '';
+  let queuedMessages = [];
+
+  function keepAlive() {
+    const pingUrl = `${location.href.slice(0, location.href.lastIndexOf('/'))}/ping`;
+    window.setInterval(() => {
+      if (serviceWorker) {
+        serviceWorker.postMessage('ping');
+      } else {
+        fetch(pingUrl).catch(() => {});
+      }
+    }, 10000);
+  }
+
+  window.onmessage = (event) => queuedMessages.push(event);
+
+  function registerWorker() {
+    return navigator.serviceWorker.getRegistration('./').then((registration) => {
+      return registration || navigator.serviceWorker.register('sw.js', { scope: './' });
+    }).then((registration) => {
+      const installing = registration.installing || registration.waiting;
+      scope = registration.scope;
+      if (registration.active) {
+        serviceWorker = registration.active;
+        return;
+      }
+      return new Promise((resolve) => {
+        installing.addEventListener('statechange', () => {
+          if (installing.state === 'activated') {
+            serviceWorker = registration.active;
+            resolve();
+          }
+        });
+      });
+    });
+  }
+
+  function onMessage(event) {
+    const { data, ports, origin } = event;
+    if (!ports || !ports.length || !data || typeof data !== 'object') {
+      throw new TypeError('StreamSaver expects an object and a MessageChannel.');
+    }
+
+    data.origin = origin;
+    data.referrer = data.referrer || document.referrer || origin;
+    data.streamSaverVersion = new URLSearchParams(location.search).get('version');
+    data.pathname = (data.pathname || `${Math.random().toString().slice(-6)}/${data.filename || 'download'}`).replace(/^\/+/, '');
+    const host = origin.replace(/(^\w+:|^)\/\//, '');
+    data.url = new URL(`${scope}${host}/${data.pathname}`).toString();
+
+    const transferable = data.readableStream
+      ? [ports[0], data.readableStream]
+      : [ports[0]];
+    if (!data.readableStream && !data.transferringReadable) {
+      keepAlive();
+    }
+    serviceWorker.postMessage(data, transferable);
+  }
+
+  if (window.opener) {
+    window.opener.postMessage('StreamSaver::loadedPopup', '*');
+  }
+
+  registerWorker().then(() => {
+    window.onmessage = onMessage;
+    queuedMessages.forEach(window.onmessage);
+  });
+</script>
