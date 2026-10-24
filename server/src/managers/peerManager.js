@@ -89,6 +89,7 @@ export class PeerManager {
       pairingId: randomUUID(),
       confirmationCode: String(randomInt(0, 100)).padStart(2, '0'),
       requesterSocketId: requester.socketId,
+      initiatorSocketId: requester.socketId,
       targetSocketId: target.socketId,
       createdAt: Date.now(),
       confirmationState: {
@@ -110,6 +111,19 @@ export class PeerManager {
 
   getPairing(pairingId) {
     return this.pairings.get(pairingId) ?? null;
+  }
+
+  getPairingForSocket(socketId) {
+    const peer = this.getBySocketId(socketId);
+    if (peer?.pairingId) {
+      return this.getPairing(peer.pairingId);
+    }
+    for (const pairing of this.pairings.values()) {
+      if (pairing.requesterSocketId === socketId || pairing.targetSocketId === socketId) {
+        return pairing;
+      }
+    }
+    return null;
   }
 
   getPairingPeers(pairingId) {

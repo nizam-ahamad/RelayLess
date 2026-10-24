@@ -35,6 +35,9 @@ export default function App() {
   const currentPairingIdRef = useRef(null);
   const connectionTimeoutRef = useRef(null);
   const pendingSignalsRef = useRef([]);
+  const partnerSocketIdRef = useRef(null);
+  const pendingFilesRef = useRef(null);
+  const handleFilesRef = useRef(null);
   const pairPeerId = useMemo(() => new URLSearchParams(window.location.search).get('pair'), []);
   const autoPairRequestedRef = useRef(false);
 
@@ -59,6 +62,8 @@ export default function App() {
       connectionTimeoutRef.current = null;
     }
     pendingSignalsRef.current = [];
+    pendingFilesRef.current = null;
+    partnerSocketIdRef.current = null;
     incomingTransferRef.current?.resolve(null);
     incomingTransferRef.current = null;
     sessionRef.current?.close();
@@ -145,25 +150,38 @@ export default function App() {
 
   const sendSignal = useCallback((type, data) => {
     const pairingId = currentPairingIdRef.current;
-    if (pairingId) {
-      const payload = { pairingId, type, data, signal: data };
-      emitSocket('webrtc_signal', payload);
-      emitSocket('signal', payload);
-    }
+    const targetSocketId = partnerSocketIdRef.current;
+    const signal = data !== undefined ? data : type;
+    const signalType = type || signal?.type;
+
+    const payload = {
+      pairingId,
+      targetSocketId,
+      type: signalType,
+      data: signal,
+      signal
+    };
+
+    emitSocket('webrtc_signal', payload);
+    emitSocket('signal', payload);
   }, []);
 
   const handleIncomingSignal = useCallback(async (payload) => {
-    const signalType = payload.type || payload.signal?.type;
-    const signalData = payload.data !== undefined ? payload.data : payload.signal;
+    const signal = payload?.signal !== undefined ? payload.signal : (payload?.data !== undefined ? payload.data : payload);
+    const signalType = payload?.type || signal?.type || (signal?.candidate ? 'ice-candidate' : 'signal');
+
+    if (payload?.senderSocketId && !partnerSocketIdRef.current) {
+      partnerSocketIdRef.current = payload.senderSocketId;
+    }
 
     if (!sessionRef.current) {
       console.log(`[WebRTC] Session not ready yet. Buffering signal: ${signalType}`);
-      pendingSignalsRef.current.push({ type: signalType, data: signalData });
+      pendingSignalsRef.current.push(signal);
       return;
     }
 
     try {
-      await sessionRef.current.handleSignal(signalType, signalData);
+      await sessionRef.current.handleSignal(signal);
     } catch (error) {
       console.error('[WebRTC] Signal handling error:', error);
       showNotice('error', error.message || 'Could not complete the WebRTC handshake.');
@@ -235,6 +253,13 @@ export default function App() {
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId });
           showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || 'device'}.`);
+
+          if (pendingFilesRef.current) {
+            const queuedFiles = pendingFilesRef.current;
+            pendingFilesRef.current = null;
+            console.log('[WebRTC] Data channel ready, auto-starting queued file transfer...');
+            handleFilesRef.current?.(queuedFiles);
+          }
         } else if (state === 'data-channel-closed') {
           setConnectionState((current) => current === 'connected' ? 'ready' : current);
         } else if (state === 'failed' || state === 'disconnected') {
@@ -261,9 +286,9 @@ export default function App() {
     if (pendingSignalsRef.current.length > 0) {
       console.log(`[WebRTC] Draining ${pendingSignalsRef.current.length} buffered early signaling packets`);
       while (pendingSignalsRef.current.length > 0) {
-        const { type, data } = pendingSignalsRef.current.shift();
+        const item = pendingSignalsRef.current.shift();
         try {
-          await session.handleSignal(type, data);
+          await session.handleSignal(item);
         } catch (err) {
           console.error('[WebRTC] Error handling early buffered signal:', err);
         }
@@ -273,37 +298,23 @@ export default function App() {
 
   const handlePairingConfirmed = useCallback(async (payload) => {
     currentPairingIdRef.current = payload.pairingId;
+    partnerSocketIdRef.current = payload.targetSocketId || payload.otherSocketId || null;
     setPrompt(null);
     setWaitingForAcceptance(false);
     setSelectedPeer(payload);
-    setConnectionState('negotiating');
-    showNotice('info', 'Establishing encrypted peer-to-peer tunnel...');
+    setConnectionState('connected');
+    showNotice('success', `Connected directly to ${payload.deviceName || 'device'}.`);
 
-    // 15-second connection watchdog timeout
     if (connectionTimeoutRef.current) {
       clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
     }
-    connectionTimeoutRef.current = setTimeout(() => {
-      const channel = sessionRef.current?.dataChannel;
-      if (!channel || channel.readyState !== 'open') {
-        console.warn('[WebRTC] Connection timed out after 15 seconds');
-        if (currentPairingIdRef.current) {
-          emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
-        }
-        closeSession();
-        setConnectionState('ready');
-        showNotice(
-          'error',
-          'Connection timed out. Direct P2P tunnel could not be established across these networks. Please try connecting both devices to the same Wi-Fi network.'
-        );
-      }
-    }, 15000);
 
     await startWebRtc({
       role: payload.initiator ? 'initiator' : 'receiver',
       pairingId: payload.pairingId
     });
-  }, [closeSession, startWebRtc, showNotice]);
+  }, [startWebRtc, showNotice]);
 
   useEffect(() => {
     localStorage.setItem('p2p-device-name', deviceName);
@@ -459,7 +470,9 @@ export default function App() {
   const handleFiles = async (files) => {
     const channel = sessionRef.current?.dataChannel;
     if (!channel || channel.readyState !== 'open') {
-      showNotice('error', 'Connect to another device before choosing files.');
+      console.log('[App] DataChannel not open yet. Queuing files for transfer once channel opens.');
+      pendingFilesRef.current = files;
+      showNotice('info', 'Connecting to device... transfer will start in a moment');
       return;
     }
 
@@ -510,6 +523,8 @@ export default function App() {
     }
   };
 
+  handleFilesRef.current = handleFiles;
+
   const cancelTransfer = () => {
     transferAbortRef.current?.abort();
     transferAbortRef.current = null;
@@ -518,7 +533,7 @@ export default function App() {
 
   const rotateProgress = Math.max(0, Math.min(100, (pinSeconds / 120) * 100));
   const isConnected = connectionState === 'connected';
-  const isBusy = ['requesting', 'pairing', 'connecting-peer', 'negotiating'].includes(connectionState);
+  const isBusy = ['requesting', 'pairing', 'connecting-peer'].includes(connectionState);
 
   return (
     <div className="app-shell">
@@ -536,11 +551,9 @@ export default function App() {
             ? 'Reconnecting'
             : connectionState === 'connected'
               ? 'Direct link active'
-              : connectionState === 'negotiating'
-                ? 'Negotiating WebRTC…'
-                : connectionState === 'failed'
-                  ? 'Connection failed'
-                  : 'Signaling ready'}
+              : connectionState === 'failed'
+                ? 'Connection failed'
+                : 'Signaling ready'}
         </div>
       </header>
 
@@ -558,19 +571,6 @@ export default function App() {
 
         {notice && <div className={`notice notice-${notice.type}`} role="status">{notice.message}</div>}
 
-        {connectionState === 'negotiating' && (
-          <section className="panel negotiating-card">
-            <div className="spinner" />
-            <div className="section-kicker">03 / Establishing tunnel</div>
-            <h2>Establishing encrypted peer-to-peer tunnel…</h2>
-            <p className="muted">Negotiating direct P2P bridge with <strong>{selectedPeer?.deviceName || 'the other device'}</strong> via STUN/TURN relays.</p>
-            <button className="button button-secondary" type="button" onClick={() => {
-              emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
-              closeSession('Connection cancelled.');
-            }}>Cancel</button>
-          </section>
-        )}
-
         {connectionState === 'failed' && (
           <section className="panel failed-card">
             <div className="failed-icon">✕</div>
@@ -587,7 +587,7 @@ export default function App() {
           </section>
         )}
 
-        {!isConnected && connectionState !== 'negotiating' && connectionState !== 'failed' && (
+        {!isConnected && connectionState !== 'failed' && (
           <section className="pairing-grid">
             <article className="panel my-device-panel">
               <div className="panel-heading">

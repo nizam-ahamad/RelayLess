@@ -135,6 +135,8 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           initiator: true,
           role: 'initiator',
           peerId: target.peerId,
+          targetSocketId: target.socketId,
+          otherSocketId: target.socketId,
           deviceName: target.deviceName,
           confirmationState: result.confirmationState
         });
@@ -144,6 +146,8 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           initiator: false,
           role: 'receiver',
           peerId: requester.peerId,
+          targetSocketId: requester.socketId,
+          otherSocketId: requester.socketId,
           deviceName: requester.deviceName,
           confirmationState: result.confirmationState
         });
@@ -178,10 +182,17 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
     });
 
     const handleSignalRelay = (payload = {}) => {
-      const pairingId = payload.pairingId || peerManager.getBySocketId(socket.id)?.pairingId;
-      const otherSocketId = payload.targetSocketId || (pairingId ? peerManager.otherSocketId(pairingId, socket.id) : null);
+      let targetSocketId = payload.targetSocketId || payload.otherSocketId;
+      const pairing = peerManager.getPairingForSocket(socket.id);
 
-      if (!otherSocketId) {
+      if (!targetSocketId && pairing) {
+        const initiatorId = pairing.initiatorSocketId || pairing.requesterSocketId;
+        targetSocketId = initiatorId === socket.id
+          ? pairing.targetSocketId
+          : initiatorId;
+      }
+
+      if (!targetSocketId) {
         socket.emit('pairing_error', {
           code: 'SIGNALING_NOT_AVAILABLE',
           message: 'The WebRTC signaling session is no longer available.'
@@ -189,30 +200,21 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return;
       }
 
-      if (pairingId) {
-        const pairing = peerManager.getPairing(pairingId);
-        if (!pairing || ![pairing.requesterSocketId, pairing.targetSocketId].includes(socket.id)) {
-          return;
-        }
-      }
-
-      const signalType = payload.type || payload.signal?.type || (payload.signal?.candidate ? 'candidate' : 'signal');
-      console.log(`[Signaling] Relaying '${signalType}' from ${socket.id} to ${otherSocketId} (pairing: ${pairingId})`);
-
-      const relayData = payload.data !== undefined ? payload.data : payload.signal;
-      const relaySignal = payload.signal !== undefined ? payload.signal : payload.data;
+      const signal = payload.signal !== undefined ? payload.signal : (payload.data !== undefined ? payload.data : payload);
+      const signalType = payload.type || signal?.type || (signal?.candidate ? 'candidate' : 'signal');
+      console.log(`[Signaling] ⚡ Relaying '${signalType}' from ${socket.id} to ${targetSocketId}`);
 
       const envelope = {
-        pairingId,
+        pairingId: pairing?.pairingId || payload.pairingId,
         senderSocketId: socket.id,
-        targetSocketId: otherSocketId,
+        targetSocketId,
         type: signalType,
-        data: relayData,
-        signal: relaySignal
+        data: signal,
+        signal
       };
 
-      io.to(otherSocketId).emit('webrtc_signal', envelope);
-      io.to(otherSocketId).emit('signal', envelope);
+      io.to(targetSocketId).emit('webrtc_signal', envelope);
+      io.to(targetSocketId).emit('signal', envelope);
     };
 
     socket.on('webrtc_signal', handleSignalRelay);

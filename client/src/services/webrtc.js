@@ -1,26 +1,7 @@
 export function getIceServers() {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_ICE_SERVERS) {
-    try {
-      const parsed = JSON.parse(import.meta.env.VITE_ICE_SERVERS);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    } catch {
-      // Fall back to default STUN + TURN
-    }
-  }
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ];
 }
 
@@ -156,13 +137,15 @@ export class WebRtcSession {
   }
 
   async handleRemoteCandidate(candidate) {
+    if (!candidate) return;
+    const rawCandidate = (candidate.candidate && typeof candidate.candidate === 'object') ? candidate.candidate : candidate;
     if (!this.peerConnection || !this.peerConnection.remoteDescription) {
       console.log('[WebRTC] Buffering ICE candidate (remote description not ready yet)');
-      this.candidateQueue.push(candidate);
+      this.candidateQueue.push(rawCandidate);
       return;
     }
     try {
-      const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
+      const iceCandidate = rawCandidate instanceof RTCIceCandidate ? rawCandidate : new RTCIceCandidate(rawCandidate);
       await this.peerConnection.addIceCandidate(iceCandidate);
       console.log('[WebRTC] Added remote ICE candidate successfully');
     } catch (err) {
@@ -190,11 +173,20 @@ export class WebRtcSession {
       await this.start();
     }
 
-    const signalType = type || data?.type;
-    const sessionDesc = data?.sdp ? data : (data?.type ? data : { type: signalType, sdp: data });
+    let signalType;
+    let signalPayload;
+
+    if (typeof type === 'object' && type !== null && data === undefined) {
+      signalPayload = type;
+      signalType = type.type || (type.candidate ? 'ice-candidate' : 'signal');
+    } else {
+      signalPayload = data !== undefined ? data : type;
+      signalType = (typeof type === 'string' ? type : null) || signalPayload?.type || (signalPayload?.candidate ? 'ice-candidate' : 'signal');
+    }
 
     if (signalType === 'offer') {
       console.log('[WebRTC] Received offer, creating & sending answer...');
+      const sessionDesc = signalPayload?.sdp ? signalPayload : { type: 'offer', sdp: signalPayload?.sdp || signalPayload };
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
       await this.processCandidateQueue();
       const answer = await this.peerConnection.createAnswer();
@@ -208,14 +200,18 @@ export class WebRtcSession {
 
     if (signalType === 'answer') {
       console.log('[WebRTC] Received answer, setting remote description...');
+      const sessionDesc = signalPayload?.sdp ? signalPayload : { type: 'answer', sdp: signalPayload?.sdp || signalPayload };
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
       await this.processCandidateQueue();
       return;
     }
 
-    if (signalType === 'ice-candidate' || signalType === 'candidate') {
+    if (signalType === 'ice-candidate' || signalType === 'candidate' || signalPayload?.candidate) {
       console.log('[WebRTC] Received remote ICE candidate from signaling');
-      await this.handleRemoteCandidate(data);
+      const candidate = signalPayload?.candidate !== undefined && typeof signalPayload.candidate === 'object'
+        ? signalPayload.candidate
+        : signalPayload;
+      await this.handleRemoteCandidate(candidate);
     }
   }
 
