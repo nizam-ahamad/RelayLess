@@ -6,16 +6,47 @@ export function getIceServers() {
         return parsed;
       }
     } catch {
-      // Fall back to default STUN servers if environment variable is not valid JSON
+      // Fall back to default STUN + TURN servers if environment variable is not valid JSON
     }
   }
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // Free open TURN relay for symmetric NAT traversal
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ];
 }
 
 export const ICE_SERVERS = getIceServers();
+
+let activeSession = null;
+
+export async function handleRemoteCandidate(candidate) {
+  if (activeSession) {
+    await activeSession.handleRemoteCandidate(candidate);
+  }
+}
+
+export async function processCandidateQueue() {
+  if (activeSession) {
+    await activeSession.processCandidateQueue();
+  }
+}
 
 export class WebRtcSession {
   constructor({ role, onMessage, onStateChange, onSignal, onError }) {
@@ -26,11 +57,13 @@ export class WebRtcSession {
     this.onError = onError;
     this.peerConnection = null;
     this.dataChannel = null;
+    this.candidateQueue = [];
     this.messageQueue = Promise.resolve();
     this.closed = false;
   }
 
   async start() {
+    activeSession = this;
     this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -42,6 +75,13 @@ export class WebRtcSession {
       this.onStateChange(state);
       if (['failed', 'disconnected', 'closed'].includes(state)) {
         this.onError?.(new Error(`WebRTC connection ${state}.`));
+      }
+    };
+    this.peerConnection.oniceconnectionstatechange = () => {
+      const state = this.peerConnection?.iceConnectionState;
+      if (['failed', 'disconnected'].includes(state)) {
+        this.onStateChange(state);
+        this.onError?.(new Error(`WebRTC ICE connection ${state}.`));
       }
     };
     this.peerConnection.ondatachannel = (event) => {
@@ -59,13 +99,37 @@ export class WebRtcSession {
     }
   }
 
+  async handleRemoteCandidate(candidate) {
+    if (!this.peerConnection || !this.peerConnection.remoteDescription) {
+      this.candidateQueue.push(candidate);
+      return;
+    }
+    try {
+      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.error('Failed to add candidate:', err);
+    }
+  }
+
+  async processCandidateQueue() {
+    while (this.candidateQueue.length > 0) {
+      const candidate = this.candidateQueue.shift();
+      try {
+        await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('Failed to drain candidate:', err);
+      }
+    }
+  }
+
   async handleSignal(type, data) {
     if (!this.peerConnection) {
       await this.start();
     }
 
     if (type === 'offer') {
-      await this.peerConnection.setRemoteDescription(data);
+      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+      await this.processCandidateQueue();
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
       this.onSignal('answer', this.peerConnection.localDescription);
@@ -73,12 +137,13 @@ export class WebRtcSession {
     }
 
     if (type === 'answer') {
-      await this.peerConnection.setRemoteDescription(data);
+      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+      await this.processCandidateQueue();
       return;
     }
 
     if (type === 'ice-candidate' && data) {
-      await this.peerConnection.addIceCandidate(data);
+      await this.handleRemoteCandidate(data);
     }
   }
 
@@ -91,11 +156,15 @@ export class WebRtcSession {
 
   close() {
     this.closed = true;
+    this.candidateQueue = [];
     this.messageQueue = Promise.resolve();
     this.dataChannel?.close();
     this.peerConnection?.close();
     this.dataChannel = null;
     this.peerConnection = null;
+    if (activeSession === this) {
+      activeSession = null;
+    }
   }
 
   #attachDataChannel(channel) {

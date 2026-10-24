@@ -203,27 +203,35 @@ export default function App() {
         if (state === 'data-channel-open') {
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId });
+          showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || 'device'}.`);
         } else if (state === 'data-channel-closed') {
-          setConnectionState('ready');
+          setConnectionState((current) => current === 'connected' ? 'ready' : current);
+        } else if (state === 'failed' || state === 'disconnected') {
+          setConnectionState('failed');
+          showNotice('error', 'WebRTC connection dropped. Could not traverse network firewalls.');
         }
       },
-      onError: (error) => showNotice('error', error.message || 'WebRTC connection failed.')
+      onError: (error) => {
+        setConnectionState('failed');
+        showNotice('error', error.message || 'WebRTC connection failed.');
+      }
     });
     sessionRef.current = session;
     await session.start();
-  }, [handleChannelMessage, sendSignal, showNotice]);
+  }, [handleChannelMessage, selectedPeer?.deviceName, sendSignal, showNotice]);
 
   const handlePairingConfirmed = useCallback(async (payload) => {
     currentPairingIdRef.current = payload.pairingId;
     setPrompt(null);
     setWaitingForAcceptance(false);
     setSelectedPeer(payload);
-    setConnectionState('connected');
+    setConnectionState('negotiating');
+    showNotice('info', 'Establishing encrypted peer-to-peer tunnel...');
     await startWebRtc({
       role: payload.initiator ? 'initiator' : 'receiver',
       pairingId: payload.pairingId
     });
-  }, [startWebRtc]);
+  }, [startWebRtc, showNotice]);
 
   useEffect(() => {
     localStorage.setItem('p2p-device-name', deviceName);
@@ -440,7 +448,7 @@ export default function App() {
 
   const rotateProgress = Math.max(0, Math.min(100, (pinSeconds / 120) * 100));
   const isConnected = connectionState === 'connected';
-  const isBusy = ['requesting', 'pairing', 'connecting-peer'].includes(connectionState);
+  const isBusy = ['requesting', 'pairing', 'connecting-peer', 'negotiating'].includes(connectionState);
 
   return (
     <div className="app-shell">
@@ -454,7 +462,15 @@ export default function App() {
         </div>
         <div className={`status-pill status-${connectionState}`}>
           <span className="status-dot" />
-          {connectionState === 'offline' ? 'Reconnecting' : connectionState === 'connected' ? 'Direct link active' : 'Signaling ready'}
+          {connectionState === 'offline'
+            ? 'Reconnecting'
+            : connectionState === 'connected'
+              ? 'Direct link active'
+              : connectionState === 'negotiating'
+                ? 'Negotiating WebRTC…'
+                : connectionState === 'failed'
+                  ? 'Connection failed'
+                  : 'Signaling ready'}
         </div>
       </header>
 
@@ -472,7 +488,36 @@ export default function App() {
 
         {notice && <div className={`notice notice-${notice.type}`} role="status">{notice.message}</div>}
 
-        {!isConnected ? (
+        {connectionState === 'negotiating' && (
+          <section className="panel negotiating-card">
+            <div className="spinner" />
+            <div className="section-kicker">03 / Establishing tunnel</div>
+            <h2>Establishing encrypted peer-to-peer tunnel…</h2>
+            <p className="muted">Negotiating direct P2P bridge with <strong>{selectedPeer?.deviceName || 'the other device'}</strong> via STUN/TURN relays.</p>
+            <button className="button button-secondary" type="button" onClick={() => {
+              emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
+              closeSession('Connection cancelled.');
+            }}>Cancel</button>
+          </section>
+        )}
+
+        {connectionState === 'failed' && (
+          <section className="panel failed-card">
+            <div className="failed-icon">✕</div>
+            <div className="section-kicker">Connection interrupted</div>
+            <h2>WebRTC Connection Failed</h2>
+            <p className="muted">Direct peer-to-peer bridge could not be established with <strong>{selectedPeer?.deviceName || 'the other device'}</strong>. This can occur with strict firewalls or mobile carrier NAT.</p>
+            <button className="button button-primary" type="button" onClick={() => {
+              if (currentPairingIdRef.current) {
+                emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
+              }
+              closeSession();
+              setConnectionState('ready');
+            }}>Reconnect</button>
+          </section>
+        )}
+
+        {!isConnected && connectionState !== 'negotiating' && connectionState !== 'failed' && (
           <section className="pairing-grid">
             <article className="panel my-device-panel">
               <div className="panel-heading">
@@ -535,7 +580,9 @@ export default function App() {
               <div className="connection-hint"><span className="lock-icon">⌑</span> You will both confirm a matching code before anything connects.</div>
             </article>
           </section>
-        ) : (
+        )}
+
+        {isConnected && (
           <section className="connected-view">
             <div className="connected-header">
               <div>
