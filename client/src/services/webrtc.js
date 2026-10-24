@@ -6,12 +6,21 @@ export function getIceServers() {
         return parsed;
       }
     } catch {
-      // Fall back to default STUN
+      // Fall back to default STUN + TURN
     }
   }
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ];
 }
 
@@ -47,11 +56,13 @@ export class WebRtcSession {
 
   async start() {
     activeSession = this;
+    console.log('[WebRTC] Role assigned:', this.role);
     this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
 
-    // Trickle ICE: emit each candidate immediately the moment it is generated
+    // Trickle ICE: emit candidate immediately over the socket
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('[WebRTC] Generated local ICE candidate, emitting over signaling');
         const candidatePayload = event.candidate.toJSON ? event.candidate.toJSON() : event.candidate;
         this.onSignal('ice-candidate', candidatePayload);
       }
@@ -59,7 +70,7 @@ export class WebRtcSession {
 
     this.peerConnection.onconnectionstatechange = () => {
       const state = this.peerConnection?.connectionState;
-      console.log('⚡ WebRTC connectionState:', state);
+      console.log('[WebRTC] Connection State:', state);
       if (state === 'connected') {
         this.onStateChange('connected');
       } else if (['failed', 'disconnected', 'closed'].includes(state)) {
@@ -70,7 +81,7 @@ export class WebRtcSession {
 
     this.peerConnection.oniceconnectionstatechange = () => {
       const state = this.peerConnection?.iceConnectionState;
-      console.log('⚡ WebRTC iceConnectionState:', state);
+      console.log('[WebRTC] ICE Connection State:', state);
       if (state === 'connected' || state === 'completed') {
         if (this.dataChannel?.readyState === 'open') {
           this.onStateChange('data-channel-open');
@@ -83,12 +94,13 @@ export class WebRtcSession {
 
     // Receiver side: attach incoming DataChannel
     this.peerConnection.ondatachannel = (event) => {
-      console.log('⚡ WebRTC ondatachannel received on receiver!');
+      console.log('[WebRTC] ondatachannel received on receiver!');
       this.setupDataChannelEvents(event.channel);
     };
 
-    // Initiator side: create DataChannel immediately
+    // Initiator side: create DataChannel and offer immediately
     if (this.role === 'initiator') {
+      console.log('[WebRTC] Creating & sending offer...');
       const channel = this.peerConnection.createDataChannel('fileTransfer', {
         ordered: true
       });
@@ -106,11 +118,10 @@ export class WebRtcSession {
     channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
 
     const onConnected = () => {
-      console.log('⚡ WebRTC DataChannel OPEN - Instant link ready!');
+      console.log('[WebRTC] ⚡ DataChannel OPEN!');
       this.onStateChange('data-channel-open');
     };
 
-    // Fast-path: if DataChannel is already open (common on receiver side)
     if (channel.readyState === 'open') {
       onConnected();
     } else {
@@ -118,10 +129,13 @@ export class WebRtcSession {
     }
 
     channel.onclose = () => {
-      console.log('⚡ WebRTC DataChannel closed');
+      console.log('[WebRTC] DataChannel closed');
       this.onStateChange('data-channel-closed');
     };
-    channel.onerror = (event) => this.onError?.(event.error ?? new Error('Data channel error.'));
+    channel.onerror = (event) => {
+      console.error('[WebRTC] DataChannel error:', event.error);
+      this.onError?.(event.error ?? new Error('Data channel error.'));
+    };
     channel.onmessage = (event) => {
       this.messageQueue = this.messageQueue
         .then(() => this.onMessage(event.data))
@@ -131,25 +145,30 @@ export class WebRtcSession {
 
   async handleRemoteCandidate(candidate) {
     if (!this.peerConnection || !this.peerConnection.remoteDescription) {
+      console.log('[WebRTC] Buffering ICE candidate (remote description not ready yet)');
       this.candidateQueue.push(candidate);
       return;
     }
     try {
       const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
       await this.peerConnection.addIceCandidate(iceCandidate);
+      console.log('[WebRTC] Added remote ICE candidate successfully');
     } catch (err) {
-      console.error('Failed to add candidate:', err);
+      console.error('[WebRTC] Failed to add candidate:', err);
     }
   }
 
   async processCandidateQueue() {
+    if (this.candidateQueue.length > 0) {
+      console.log(`[WebRTC] Draining ${this.candidateQueue.length} buffered ICE candidates`);
+    }
     while (this.candidateQueue.length > 0) {
       const candidate = this.candidateQueue.shift();
       try {
         const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
         await this.peerConnection.addIceCandidate(iceCandidate);
       } catch (err) {
-        console.error('Failed to drain candidate:', err);
+        console.error('[WebRTC] Failed to drain candidate:', err);
       }
     }
   }
@@ -160,6 +179,7 @@ export class WebRtcSession {
     }
 
     if (type === 'offer') {
+      console.log('[WebRTC] Received offer, creating & sending answer...');
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data));
       await this.processCandidateQueue();
       const answer = await this.peerConnection.createAnswer();
@@ -169,12 +189,14 @@ export class WebRtcSession {
     }
 
     if (type === 'answer') {
+      console.log('[WebRTC] Received answer, setting remote description...');
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data));
       await this.processCandidateQueue();
       return;
     }
 
     if (type === 'ice-candidate' && data) {
+      console.log('[WebRTC] Received remote ICE candidate from signaling');
       await this.handleRemoteCandidate(data);
     }
   }

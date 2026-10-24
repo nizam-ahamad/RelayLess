@@ -187,6 +187,8 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return;
       }
 
+      console.log(`[Signaling] Relaying '${payload.type}' from ${socket.id} to ${otherSocketId} (pairing: ${payload.pairingId})`);
+
       io.to(otherSocketId).emit('webrtc_signal', {
         pairingId: payload.pairingId,
         type: payload.type,

@@ -33,6 +33,7 @@ export default function App() {
   const receiverRef = useRef(null);
   const incomingTransferRef = useRef(null);
   const currentPairingIdRef = useRef(null);
+  const connectionTimeoutRef = useRef(null);
   const pairPeerId = useMemo(() => new URLSearchParams(window.location.search).get('pair'), []);
   const autoPairRequestedRef = useRef(false);
 
@@ -52,6 +53,10 @@ export default function App() {
   }, []);
 
   const closeSession = useCallback((message) => {
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
     incomingTransferRef.current?.resolve(null);
     incomingTransferRef.current = null;
     sessionRef.current?.close();
@@ -201,17 +206,29 @@ export default function App() {
       onSignal: sendSignal,
       onStateChange: (state) => {
         if (state === 'data-channel-open' || state === 'connected') {
+          if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+          }
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId });
           showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || 'device'}.`);
         } else if (state === 'data-channel-closed') {
           setConnectionState((current) => current === 'connected' ? 'ready' : current);
         } else if (state === 'failed' || state === 'disconnected') {
+          if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+          }
           setConnectionState('failed');
           showNotice('error', 'WebRTC connection dropped. Could not traverse network firewalls.');
         }
       },
       onError: (error) => {
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
         setConnectionState('failed');
         showNotice('error', error.message || 'WebRTC connection failed.');
       }
@@ -227,11 +244,32 @@ export default function App() {
     setSelectedPeer(payload);
     setConnectionState('negotiating');
     showNotice('info', 'Establishing encrypted peer-to-peer tunnel...');
+
+    // 15-second connection watchdog timeout
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+    }
+    connectionTimeoutRef.current = setTimeout(() => {
+      const channel = sessionRef.current?.dataChannel;
+      if (!channel || channel.readyState !== 'open') {
+        console.warn('[WebRTC] Connection timed out after 15 seconds');
+        if (currentPairingIdRef.current) {
+          emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
+        }
+        closeSession();
+        setConnectionState('ready');
+        showNotice(
+          'error',
+          'Connection timed out. Direct P2P tunnel could not be established across these networks. Please try connecting both devices to the same Wi-Fi network.'
+        );
+      }
+    }, 15000);
+
     await startWebRtc({
       role: payload.initiator ? 'initiator' : 'receiver',
       pairingId: payload.pairingId
     });
-  }, [startWebRtc, showNotice]);
+  }, [closeSession, startWebRtc, showNotice]);
 
   useEffect(() => {
     localStorage.setItem('p2p-device-name', deviceName);
@@ -307,6 +345,9 @@ export default function App() {
     }
 
     return () => {
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+      }
       cleanups.forEach((cleanup) => cleanup());
       sessionRef.current?.close();
     };
