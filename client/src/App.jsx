@@ -10,6 +10,7 @@ import { connectSocket, disconnectSocket, emitSocket, onSocketEvent } from './se
 import { WebRtcSession } from './services/webrtc.js';
 import { createFileReceiver } from './services/fileReceiver.js';
 import { sendFile } from './services/fileSender.js';
+import { sanitizeFileName } from './utils/sanitize.js';
 
 const DEFAULT_DEVICE_NAME = 'My device';
 
@@ -152,6 +153,7 @@ export default function App() {
       }
 
       if (packet.type === 'METADATA') {
+        packet.fileName = sanitizeFileName(packet.fileName);
         const receiver = await new Promise((resolve) => {
           const pending = { metadata: packet, resolve };
           incomingTransferRef.current = pending;

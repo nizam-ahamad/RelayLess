@@ -1,3 +1,5 @@
+import { PairingRateLimiter } from '../managers/rateLimiter.js';
+
 function pairingParticipant(peer, otherPeer) {
   return {
     peerId: peer?.peerId ?? null,
@@ -7,7 +9,7 @@ function pairingParticipant(peer, otherPeer) {
   };
 }
 
-export function registerSignalingHandlers(io, peerManager) {
+export function registerSignalingHandlers(io, peerManager, rateLimiter = new PairingRateLimiter()) {
   io.on('connection', (socket) => {
     const peer = peerManager.register(socket.id);
     socket.emit('peer_ready', peer);
@@ -20,6 +22,19 @@ export function registerSignalingHandlers(io, peerManager) {
       const { targetPeerId, pin, deviceName } = payload;
       peerManager.setDeviceName(socket.id, deviceName);
 
+      const clientIp = socket.handshake?.address || socket.conn?.remoteAddress;
+      const rateLimitKeys = [socket.id, clientIp].filter(Boolean);
+
+      if (rateLimiter.isRateLimited(...rateLimitKeys)) {
+        const response = {
+          code: 'RATE_LIMITED',
+          message: 'Too many failed pairing attempts. Please wait a minute before trying again.'
+        };
+        socket.emit('pairing_error', response);
+        acknowledgement?.({ ok: false, ...response });
+        return;
+      }
+
       try {
         const requester = peerManager.getBySocketId(socket.id);
         const target = targetPeerId
@@ -27,7 +42,9 @@ export function registerSignalingHandlers(io, peerManager) {
           : (pin ? peerManager.getByPin(pin) : null);
 
         if (target && requester && (target.socketId === requester.socketId || target.peerId === requester.peerId)) {
+          rateLimiter.recordFailure(...rateLimitKeys);
           const response = {
+            code: 'SELF_PAIRING',
             message: 'Cannot pair with your own device'
           };
           socket.emit('pairing_error', response);
@@ -39,6 +56,8 @@ export function registerSignalingHandlers(io, peerManager) {
           peerId: targetPeerId,
           pin
         });
+        rateLimiter.recordSuccess(...rateLimitKeys);
+
         const participants = peerManager.getPairingPeers(pairing.pairingId);
         const requesterPeer = participants.requester;
         const targetPeer = participants.target;
@@ -62,6 +81,7 @@ export function registerSignalingHandlers(io, peerManager) {
         });
         acknowledgement?.({ ok: true, pairingId: pairing.pairingId });
       } catch (error) {
+        rateLimiter.recordFailure(...rateLimitKeys);
         const response = {
           code: error.code ?? 'PAIRING_FAILED',
           message: error.message
@@ -136,6 +156,11 @@ export function registerSignalingHandlers(io, peerManager) {
     });
 
     socket.on('pairing_cancel', (payload = {}) => {
+      const pairing = peerManager.getPairing(payload.pairingId);
+      if (!pairing || ![pairing.requesterSocketId, pairing.targetSocketId].includes(socket.id)) {
+        return;
+      }
+
       const closed = peerManager.closePairing(payload.pairingId);
       if (!closed) {
         return;
@@ -196,6 +221,7 @@ export function registerSignalingHandlers(io, peerManager) {
     });
 
     socket.on('disconnect', (reason) => {
+      rateLimiter.resetKey(socket.id);
       const result = peerManager.unregister(socket.id);
       const other = result.pairing
         ? [result.pairing.requester, result.pairing.target].find(

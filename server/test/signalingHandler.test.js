@@ -153,3 +153,76 @@ test('rejects self-pairing attempt and emits pairing_error', () => {
   peerManager.destroy();
   pinManager.destroy();
 });
+
+test('throttles rapid failed request_pairing attempts and emits RATE_LIMITED', () => {
+  const pinManager = new PinManager({ ttlMs: 1000 });
+  const peerManager = new PeerManager({ pinManager });
+  const io = new FakeIo();
+  registerSignalingHandlers(io, peerManager);
+
+  const attackerSocket = new FakeSocket('socket-attacker');
+  io.connect(attackerSocket);
+
+  // Send 5 invalid PIN pairing requests
+  for (let i = 0; i < 5; i++) {
+    attackerSocket.receive('request_pairing', {
+      pin: '000000',
+      deviceName: 'Attacker'
+    });
+  }
+
+  const error5 = attackerSocket.latest('pairing_error');
+  assert.equal(error5?.code, 'TARGET_NOT_FOUND');
+
+  // 6th attempt within the rate limit window must be blocked with RATE_LIMITED
+  let ackResult = null;
+  attackerSocket.receive('request_pairing', {
+    pin: '000000',
+    deviceName: 'Attacker'
+  }, (res) => { ackResult = res; });
+
+  const error6 = attackerSocket.latest('pairing_error');
+  assert.equal(error6?.code, 'RATE_LIMITED');
+  assert.equal(ackResult?.code, 'RATE_LIMITED');
+
+  peerManager.destroy();
+  pinManager.destroy();
+});
+
+test('prevents unauthorized third-party socket from cancelling another pairing', () => {
+  const pinManager = new PinManager({ ttlMs: 1000 });
+  const peerManager = new PeerManager({ pinManager });
+  const io = new FakeIo();
+  registerSignalingHandlers(io, peerManager);
+
+  const socketA = new FakeSocket('socket-a');
+  const socketB = new FakeSocket('socket-b');
+  const socketC = new FakeSocket('socket-attacker');
+  io.connect(socketA);
+  io.connect(socketB);
+  io.connect(socketC);
+
+  const peerB = socketB.latest('peer_ready');
+  socketA.receive('request_pairing', { pin: peerB.pin, deviceName: 'A' });
+
+  const promptA = socketA.latest('pairing_prompt');
+  assert.ok(promptA?.pairingId);
+
+  // Attacker socket C attempts to cancel A and B's pairing
+  socketC.receive('pairing_cancel', { pairingId: promptA.pairingId });
+
+  // Pairing must still be active
+  assert.ok(peerManager.getPairing(promptA.pairingId));
+  assert.equal(socketA.all('pairing_cancelled').length, 0);
+  assert.equal(socketB.all('pairing_cancelled').length, 0);
+
+  // Authorized participant A cancels
+  socketA.receive('pairing_cancel', { pairingId: promptA.pairingId });
+  assert.equal(peerManager.getPairing(promptA.pairingId), null);
+  assert.equal(socketA.all('pairing_cancelled').length, 1);
+  assert.equal(socketB.all('pairing_cancelled').length, 1);
+
+  peerManager.destroy();
+  pinManager.destroy();
+});
+

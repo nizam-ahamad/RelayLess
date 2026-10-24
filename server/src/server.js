@@ -9,25 +9,67 @@ import { registerSignalingHandlers } from './handlers/signalingHandler.js';
 import { PeerManager } from './managers/peerManager.js';
 import { PinManager } from './managers/pinManager.js';
 
+import { PairingRateLimiter } from './managers/rateLimiter.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..', '..');
 const clientDist = join(projectRoot, 'client', 'dist');
 const port = Number(process.env.PORT ?? 3001);
 const pinTtlMs = Number(process.env.PIN_TTL_MS ?? 120_000);
-const defaultOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Parse configured origins from environment (comma-delimited)
 const configuredOrigins = String(process.env.CLIENT_ORIGIN ?? '')
   .split(',')
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
-const allowedOrigins = Array.from(new Set([...defaultOrigins, ...configuredOrigins.filter((o) => o !== '*')]));
+// Development defaults
+const devOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+const allowedOrigins = new Set(
+  isProduction
+    ? configuredOrigins
+    : [...devOrigins, ...configuredOrigins]
+);
+
+const isOriginAllowed = (origin) => {
+  // Allow requests with no origin (curl, same-origin navigations, health checks)
+  if (!origin) {
+    return true;
+  }
+
+  const normalized = origin.trim().replace(/\/+$/, '');
+  if (allowedOrigins.has(normalized)) {
+    return true;
+  }
+
+  // Support Render automatic service URL if present
+  if (process.env.RENDER_EXTERNAL_URL) {
+    try {
+      const renderHost = new URL(process.env.RENDER_EXTERNAL_URL).host;
+      if (new URL(normalized).host === renderHost) {
+        return true;
+      }
+    } catch {}
+  }
+
+  // In development, allow any localhost/127.0.0.1 port
+  if (!isProduction) {
+    if (normalized.startsWith('http://localhost:') || normalized.startsWith('http://127.0.0.1:')) {
+      return true;
+    }
+  }
+
+  return false;
+};
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:') || configuredOrigins.includes('*')) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
     }
   },
   credentials: true,
@@ -47,6 +89,10 @@ const pinManager = new PinManager({
   ttlMs: Number.isFinite(pinTtlMs) && pinTtlMs > 0 ? pinTtlMs : 120_000
 });
 const peerManager = new PeerManager({ pinManager });
+const rateLimiter = new PairingRateLimiter({
+  windowMs: 60_000,
+  maxFailedAttempts: 5
+});
 
 pinManager.onRotate = (pin) => {
   const peer = peerManager.getByPeerId(pin.peerId);
@@ -82,12 +128,13 @@ if (existsSync(clientDist)) {
   });
 }
 
-registerSignalingHandlers(io, peerManager);
+registerSignalingHandlers(io, peerManager, rateLimiter);
 
 const shutdown = () => {
   io.close();
   peerManager.destroy();
   pinManager.destroy();
+  rateLimiter.destroy();
   httpServer.close(() => process.exit(0));
 };
 

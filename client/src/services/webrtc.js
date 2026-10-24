@@ -1,7 +1,21 @@
-export const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
-];
+export function getIceServers() {
+  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_ICE_SERVERS) {
+    try {
+      const parsed = JSON.parse(import.meta.env.VITE_ICE_SERVERS);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch {
+      // Fall back to default STUN servers if environment variable is not valid JSON
+    }
+  }
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ];
+}
+
+export const ICE_SERVERS = getIceServers();
 
 export class WebRtcSession {
   constructor({ role, onMessage, onStateChange, onSignal, onError }) {
@@ -17,7 +31,7 @@ export class WebRtcSession {
   }
 
   async start() {
-    this.peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
         this.onSignal('ice-candidate', event.candidate);

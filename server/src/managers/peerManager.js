@@ -221,14 +221,23 @@ export class PeerManager {
 
   unregister(socketId) {
     const peer = this.getBySocketId(socketId);
-    if (!peer) {
-      return { peer: null, pairing: null };
+    let pairing = null;
+    if (peer?.pairingId) {
+      pairing = this.closePairing(peer.pairingId);
+    } else {
+      for (const [id, p] of this.pairings.entries()) {
+        if (p.requesterSocketId === socketId || p.targetSocketId === socketId) {
+          pairing = this.closePairing(id);
+          break;
+        }
+      }
     }
 
-    const pairing = peer.pairingId ? this.closePairing(peer.pairingId) : null;
     this.peersBySocketId.delete(socketId);
-    this.peersByPeerId.delete(peer.peerId);
-    this.pinManager.remove(peer.peerId);
+    if (peer?.peerId) {
+      this.peersByPeerId.delete(peer.peerId);
+      this.pinManager.remove(peer.peerId);
+    }
     return { peer, pairing };
   }
 

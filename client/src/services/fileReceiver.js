@@ -1,4 +1,5 @@
 import streamSaver from 'streamsaver';
+import { sanitizeFileName } from '../utils/sanitize.js';
 
 export async function createFileReceiver(metadata, { onProgress, onComplete, onError }) {
   let writable = null;
@@ -6,26 +7,32 @@ export async function createFileReceiver(metadata, { onProgress, onComplete, onE
   let chunksReceived = 0;
   let closed = false;
 
+  const safeFileName = sanitizeFileName(metadata?.fileName);
+  const safeMetadata = {
+    ...metadata,
+    fileName: safeFileName
+  };
+
   try {
     if ('showSaveFilePicker' in window) {
-      const extension = extensionFor(metadata.fileName);
-      const pickerOptions = { suggestedName: metadata.fileName };
+      const extension = extensionFor(safeFileName);
+      const pickerOptions = { suggestedName: safeFileName };
       if (extension) {
         pickerOptions.types = [{
-          description: metadata.fileType || 'File',
-          accept: { [metadata.fileType || 'application/octet-stream']: [extension] }
+          description: safeMetadata.fileType || 'File',
+          accept: { [safeMetadata.fileType || 'application/octet-stream']: [extension] }
         }];
       }
       const handle = await window.showSaveFilePicker(pickerOptions);
       writable = await handle.createWritable();
-    } else if (metadata.fileSize > 2 * 1024 * 1024 * 1024) {
+    } else if (safeMetadata.fileSize > 2 * 1024 * 1024 * 1024) {
       throw new Error(
         'This browser cannot stream files larger than 2 GB directly to disk. Use Chrome or Edge for very large transfers.'
       );
     } else {
       streamSaver.mitm = new URL('/streamsaver/mitm.html', window.location.origin).toString();
-      writable = streamSaver.createWriteStream(metadata.fileName, {
-        size: metadata.fileSize
+      writable = streamSaver.createWriteStream(safeFileName, {
+        size: safeMetadata.fileSize
       }).getWriter();
     }
   } catch (error) {
@@ -34,7 +41,7 @@ export async function createFileReceiver(metadata, { onProgress, onComplete, onE
   }
 
   return {
-    metadata,
+    metadata: safeMetadata,
     async write(chunk) {
       if (closed) {
         throw new Error('The receiver is already closed.');
@@ -44,12 +51,12 @@ export async function createFileReceiver(metadata, { onProgress, onComplete, onE
       bytesReceived += buffer.byteLength;
       chunksReceived += 1;
       onProgress?.({
-        transferId: metadata.transferId,
-        fileName: metadata.fileName,
-        fileSize: metadata.fileSize,
+        transferId: safeMetadata.transferId,
+        fileName: safeFileName,
+        fileSize: safeMetadata.fileSize,
         bytesReceived,
         chunksReceived,
-        percent: metadata.fileSize === 0 ? 100 : (bytesReceived / metadata.fileSize) * 100
+        percent: safeMetadata.fileSize === 0 ? 100 : (bytesReceived / safeMetadata.fileSize) * 100
       });
     },
     async complete() {
@@ -59,9 +66,9 @@ export async function createFileReceiver(metadata, { onProgress, onComplete, onE
       closed = true;
       await writable.close();
       onComplete?.({
-        transferId: metadata.transferId,
-        fileName: metadata.fileName,
-        fileSize: metadata.fileSize,
+        transferId: safeMetadata.transferId,
+        fileName: safeFileName,
+        fileSize: safeMetadata.fileSize,
         bytesReceived,
         chunksReceived
       });
