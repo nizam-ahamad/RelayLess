@@ -1,7 +1,17 @@
 export function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ];
 }
 
@@ -39,11 +49,17 @@ export class WebRtcSession {
   }
 
   sendSignal(signal) {
-    if (!this.onSignal) return;
-    this.onSignal({
-      pairingId: this.pairingId,
-      signal
-    });
+    if (this.onSignal) {
+      this.onSignal({
+        pairingId: this.pairingId,
+        signal
+      });
+    } else {
+      emitSocket('webrtc_signal', {
+        pairingId: this.pairingId,
+        signal
+      });
+    }
   }
 
   emitSignal(signal) {
@@ -58,7 +74,7 @@ export class WebRtcSession {
     // Trickle ICE: emit candidates immediately the millisecond they are generated
     this.peerConnection.onicecandidate = ({ candidate }) => {
       if (candidate) {
-        console.log('[WebRTC] 📤 Emitting candidate for pairing:', this.pairingId);
+        console.log('[WebRTC 📤] Emitting candidate to server...');
         this.sendSignal({ type: 'candidate', candidate });
       }
     };
