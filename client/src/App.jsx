@@ -28,6 +28,8 @@ export default function App() {
   const [incomingTransfer, setIncomingTransfer] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedPeer, setSelectedPeer] = useState(null);
+  const [partnerSocketId, setPartnerSocketId] = useState(null);
+  const [webrtcRole, setWebrtcRole] = useState(null);
   const sessionRef = useRef(null);
   const transferAbortRef = useRef(null);
   const receiverRef = useRef(null);
@@ -36,6 +38,7 @@ export default function App() {
   const connectionTimeoutRef = useRef(null);
   const pendingSignalsRef = useRef([]);
   const partnerSocketIdRef = useRef(null);
+  const webrtcRoleRef = useRef(null);
   const pendingFilesRef = useRef(null);
   const handleFilesRef = useRef(null);
   const pairPeerId = useMemo(() => new URLSearchParams(window.location.search).get('pair'), []);
@@ -64,6 +67,9 @@ export default function App() {
     pendingSignalsRef.current = [];
     pendingFilesRef.current = null;
     partnerSocketIdRef.current = null;
+    webrtcRoleRef.current = null;
+    setPartnerSocketId(null);
+    setWebrtcRole(null);
     incomingTransferRef.current?.resolve(null);
     incomingTransferRef.current = null;
     sessionRef.current?.close();
@@ -148,30 +154,41 @@ export default function App() {
     pending.resolve(null);
   }, []);
 
-  const sendSignal = useCallback((type, data) => {
-    const pairingId = currentPairingIdRef.current;
-    const targetSocketId = partnerSocketIdRef.current;
-    const signal = data !== undefined ? data : type;
-    const signalType = type || signal?.type;
+  const sendSignal = useCallback((payload, maybeData) => {
+    let targetSocketId = partnerSocketIdRef.current;
+    let signal = payload;
 
-    const payload = {
-      pairingId,
+    if (payload && typeof payload === 'object' && payload.signal !== undefined) {
+      targetSocketId = payload.targetSocketId || targetSocketId;
+      signal = payload.signal;
+    } else if (maybeData !== undefined) {
+      signal = maybeData;
+    }
+
+    const signalType = signal?.type || (signal?.candidate ? 'ice-candidate' : 'signal');
+    console.log(`[WebRTC] Emitting webrtc_signal to ${targetSocketId}:`, signalType);
+
+    const envelope = {
       targetSocketId,
+      pairingId: currentPairingIdRef.current,
       type: signalType,
       data: signal,
       signal
     };
 
-    emitSocket('webrtc_signal', payload);
-    emitSocket('signal', payload);
+    emitSocket('webrtc_signal', envelope);
+    emitSocket('signal', envelope);
   }, []);
 
   const handleIncomingSignal = useCallback(async (payload) => {
     const signal = payload?.signal !== undefined ? payload.signal : (payload?.data !== undefined ? payload.data : payload);
     const signalType = payload?.type || signal?.type || (signal?.candidate ? 'ice-candidate' : 'signal');
 
-    if (payload?.senderSocketId && !partnerSocketIdRef.current) {
-      partnerSocketIdRef.current = payload.senderSocketId;
+    const senderSocketId = payload?.senderSocketId;
+    if (senderSocketId && !partnerSocketIdRef.current) {
+      console.log(`[WebRTC] Storing partnerSocketId from incoming signal: ${senderSocketId}`);
+      partnerSocketIdRef.current = senderSocketId;
+      setPartnerSocketId(senderSocketId);
     }
 
     if (!sessionRef.current) {
@@ -238,21 +255,25 @@ export default function App() {
     }
   }, [showNotice]);
 
-  const startWebRtc = useCallback(async ({ role, pairingId }) => {
+  const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId }) => {
     sessionRef.current?.close();
+    console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Partner: ${partnerSocketId}`);
     const session = new WebRtcSession({
       role,
+      partnerSocketId: partnerSocketId || partnerSocketIdRef.current,
       onMessage: handleChannelMessage,
       onSignal: sendSignal,
       onStateChange: (state) => {
-        if (state === 'data-channel-open' || state === 'connected') {
+        console.log(`[WebRTC] onStateChange: ${state}`);
+        if (state === 'data-channel-open') {
           if (connectionTimeoutRef.current) {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
+          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting connectionState = connected.');
           setConnectionState('connected');
-          emitSocket('webrtc_ready', { pairingId });
-          showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || 'device'}.`);
+          emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
+          showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'device'}.`);
 
           if (pendingFilesRef.current) {
             const queuedFiles = pendingFilesRef.current;
@@ -261,17 +282,20 @@ export default function App() {
             handleFilesRef.current?.(queuedFiles);
           }
         } else if (state === 'data-channel-closed') {
+          console.log('[WebRTC] DataChannel closed');
           setConnectionState((current) => current === 'connected' ? 'ready' : current);
         } else if (state === 'failed' || state === 'disconnected') {
           if (connectionTimeoutRef.current) {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
+          console.warn(`[WebRTC] Connection ${state}`);
           setConnectionState('failed');
           showNotice('error', 'WebRTC connection dropped. Could not traverse network firewalls.');
         }
       },
       onError: (error) => {
+        console.error('[WebRTC] Session error:', error);
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
@@ -294,27 +318,62 @@ export default function App() {
         }
       }
     }
-  }, [handleChannelMessage, selectedPeer?.deviceName, sendSignal, showNotice]);
+  }, [handleChannelMessage, selectedPeer?.deviceName, selectedPeer?.partnerName, sendSignal, showNotice]);
 
   const handlePairingConfirmed = useCallback(async (payload) => {
-    currentPairingIdRef.current = payload.pairingId;
-    partnerSocketIdRef.current = payload.targetSocketId || payload.otherSocketId || null;
-    setPrompt(null);
-    setWaitingForAcceptance(false);
-    setSelectedPeer(payload);
-    setConnectionState('connected');
-    showNotice('success', `Connected directly to ${payload.deviceName || 'device'}.`);
+    console.log('[Signaling] ⚡ Received pairing_confirmed event:', payload);
+    try {
+      const pairingId = payload.pairingId || payload.id;
+      const targetSocketId = payload.partnerSocketId || payload.targetSocketId || payload.otherSocketId;
+      const role = payload.role || (payload.initiator ? 'initiator' : 'receiver');
+      const partnerName = payload.partnerName || payload.deviceName || 'device';
 
-    if (connectionTimeoutRef.current) {
-      clearTimeout(connectionTimeoutRef.current);
-      connectionTimeoutRef.current = null;
+      console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Partner Socket: ${targetSocketId}, Partner Name: ${partnerName}`);
+
+      currentPairingIdRef.current = pairingId;
+      partnerSocketIdRef.current = targetSocketId;
+      setPartnerSocketId(targetSocketId);
+      webrtcRoleRef.current = role;
+      setWebrtcRole(role);
+
+      setPrompt(null);
+      setWaitingForAcceptance(false);
+      setSelectedPeer({
+        ...payload,
+        pairingId,
+        targetSocketId,
+        partnerSocketId: targetSocketId,
+        role,
+        deviceName: partnerName,
+        partnerName
+      });
+
+      // Synchronize: set connecting (NOT connected) until dataChannel.onopen fires
+      setConnectionState('connecting');
+      showNotice('info', 'Connecting to device...');
+
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+      }
+      connectionTimeoutRef.current = setTimeout(() => {
+        const channel = sessionRef.current?.dataChannel;
+        if (!channel || channel.readyState !== 'open') {
+          console.warn('[WebRTC] Connection watchdog timed out after 15 seconds');
+          closeSession('Connection timed out. Could not establish P2P bridge with other device.');
+        }
+      }, 15000);
+
+      await startWebRtc({
+        role,
+        pairingId,
+        partnerSocketId: targetSocketId
+      });
+    } catch (error) {
+      console.error('[Signaling] Fatal error in handlePairingConfirmed:', error);
+      showNotice('error', `Failed to start connection: ${error.message}`);
+      setConnectionState('failed');
     }
-
-    await startWebRtc({
-      role: payload.initiator ? 'initiator' : 'receiver',
-      pairingId: payload.pairingId
-    });
-  }, [startWebRtc, showNotice]);
+  }, [closeSession, startWebRtc, showNotice]);
 
   useEffect(() => {
     localStorage.setItem('p2p-device-name', deviceName);
@@ -346,7 +405,7 @@ export default function App() {
       onSocketEvent('peer_ready', (nextPeer) => {
         setPeer(nextPeer);
         setPinSeconds(nextPeer.expiresIn ?? 120);
-        setConnectionState('ready');
+        setConnectionState((current) => (current === 'connecting' && !currentPairingIdRef.current) || current === 'offline' ? 'ready' : current);
       }),
       onSocketEvent('update_pin', (nextPin) => {
         setPeer((current) => ({ ...(current || {}), ...nextPin }));
@@ -533,7 +592,7 @@ export default function App() {
 
   const rotateProgress = Math.max(0, Math.min(100, (pinSeconds / 120) * 100));
   const isConnected = connectionState === 'connected';
-  const isBusy = ['requesting', 'pairing', 'connecting-peer'].includes(connectionState);
+  const isBusy = ['requesting', 'pairing', 'connecting-peer', 'connecting'].includes(connectionState);
 
   return (
     <div className="app-shell">
@@ -551,9 +610,11 @@ export default function App() {
             ? 'Reconnecting'
             : connectionState === 'connected'
               ? 'Direct link active'
-              : connectionState === 'failed'
-                ? 'Connection failed'
-                : 'Signaling ready'}
+              : connectionState === 'connecting'
+                ? 'Connecting to device…'
+                : connectionState === 'failed'
+                  ? 'Connection failed'
+                  : 'Signaling ready'}
         </div>
       </header>
 

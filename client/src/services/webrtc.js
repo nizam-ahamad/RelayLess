@@ -22,8 +22,9 @@ export async function processCandidateQueue() {
 }
 
 export class WebRtcSession {
-  constructor({ role, onMessage, onStateChange, onSignal, onError }) {
+  constructor({ role, partnerSocketId, onMessage, onStateChange, onSignal, onError }) {
     this.role = role;
+    this.partnerSocketId = partnerSocketId;
     this.onMessage = onMessage;
     this.onStateChange = onStateChange;
     this.onSignal = onSignal;
@@ -35,9 +36,17 @@ export class WebRtcSession {
     this.closed = false;
   }
 
+  emitSignal(signal) {
+    if (!this.onSignal) return;
+    this.onSignal({
+      targetSocketId: this.partnerSocketId,
+      signal
+    });
+  }
+
   async start() {
     activeSession = this;
-    console.log('[WebRTC] Role assigned:', this.role);
+    console.log('[WebRTC] Role assigned:', this.role, 'Partner socket:', this.partnerSocketId);
     this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
 
     // Trickle ICE: emit candidates immediately the millisecond they are generated
@@ -51,7 +60,7 @@ export class WebRtcSession {
               sdpMid: event.candidate.sdpMid,
               sdpMLineIndex: event.candidate.sdpMLineIndex
             };
-        this.onSignal('ice-candidate', candidatePayload);
+        this.emitSignal(candidatePayload);
       }
     };
 
@@ -59,9 +68,11 @@ export class WebRtcSession {
       const state = this.peerConnection?.connectionState;
       console.log('[WebRTC] Connection State:', state);
       if (state === 'connected') {
-        this.onStateChange('connected');
+        if (this.dataChannel?.readyState === 'open') {
+          this.onStateChange?.('data-channel-open');
+        }
       } else if (['failed', 'disconnected', 'closed'].includes(state)) {
-        this.onStateChange(state);
+        this.onStateChange?.(state);
         this.onError?.(new Error(`WebRTC connection ${state}.`));
       }
     };
@@ -71,10 +82,10 @@ export class WebRtcSession {
       console.log('[WebRTC] ICE Connection State:', state);
       if (state === 'connected' || state === 'completed') {
         if (this.dataChannel?.readyState === 'open') {
-          this.onStateChange('data-channel-open');
+          this.onStateChange?.('data-channel-open');
         }
       } else if (['failed', 'disconnected'].includes(state)) {
-        this.onStateChange(state);
+        this.onStateChange?.(state);
         this.onError?.(new Error(`WebRTC ICE connection ${state}.`));
       }
     };
@@ -82,7 +93,7 @@ export class WebRtcSession {
     // Receiver side: attach incoming DataChannel
     this.peerConnection.ondatachannel = (event) => {
       console.log('[WebRTC] ondatachannel received on receiver!');
-      this.setupDataChannelEvents(event.channel);
+      this.setupDataChannel(event.channel);
     };
 
     // Initiator side: create DataChannel FIRST so it is included in the SDP offer
@@ -91,20 +102,20 @@ export class WebRtcSession {
       const channel = this.peerConnection.createDataChannel('fileTransfer', {
         ordered: true
       });
-      this.setupDataChannelEvents(channel);
+      this.setupDataChannel(channel);
 
       console.log('[WebRTC] Creating & sending offer...');
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
 
-      this.onSignal('offer', {
+      this.emitSignal({
         type: offer.type || 'offer',
         sdp: offer.sdp
       });
     }
   }
 
-  setupDataChannelEvents(channel) {
+  setupDataChannel(channel) {
     if (!channel) return;
     this.dataChannel = channel;
     channel.binaryType = 'arraybuffer';
@@ -112,18 +123,18 @@ export class WebRtcSession {
 
     const onConnected = () => {
       console.log('[WebRTC] ⚡ DataChannel OPENED!');
-      this.onStateChange('data-channel-open');
+      this.onStateChange?.('data-channel-open');
     };
 
     if (channel.readyState === 'open') {
       onConnected();
     } else {
-      channel.onopen = onConnected;
+      channel.onopen = () => onConnected();
     }
 
     channel.onclose = () => {
       console.log('[WebRTC] DataChannel closed');
-      this.onStateChange('data-channel-closed');
+      this.onStateChange?.('data-channel-closed');
     };
     channel.onerror = (event) => {
       console.error('[WebRTC] DataChannel error:', event.error);
@@ -134,6 +145,10 @@ export class WebRtcSession {
         .then(() => this.onMessage(event.data))
         .catch((error) => this.onError?.(error));
     };
+  }
+
+  setupDataChannelEvents(channel) {
+    return this.setupDataChannel(channel);
   }
 
   async handleRemoteCandidate(candidate) {
@@ -191,7 +206,7 @@ export class WebRtcSession {
       await this.processCandidateQueue();
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
-      this.onSignal('answer', {
+      this.emitSignal({
         type: answer.type || 'answer',
         sdp: answer.sdp
       });
@@ -226,10 +241,26 @@ export class WebRtcSession {
     this.closed = true;
     this.candidateQueue = [];
     this.messageQueue = Promise.resolve();
-    this.dataChannel?.close();
-    this.peerConnection?.close();
-    this.dataChannel = null;
-    this.peerConnection = null;
+    if (this.dataChannel) {
+      this.dataChannel.onopen = null;
+      this.dataChannel.onclose = null;
+      this.dataChannel.onerror = null;
+      this.dataChannel.onmessage = null;
+      try {
+        this.dataChannel.close();
+      } catch {}
+      this.dataChannel = null;
+    }
+    if (this.peerConnection) {
+      this.peerConnection.onicecandidate = null;
+      this.peerConnection.onconnectionstatechange = null;
+      this.peerConnection.oniceconnectionstatechange = null;
+      this.peerConnection.ondatachannel = null;
+      try {
+        this.peerConnection.close();
+      } catch {}
+      this.peerConnection = null;
+    }
     if (activeSession === this) {
       activeSession = null;
     }

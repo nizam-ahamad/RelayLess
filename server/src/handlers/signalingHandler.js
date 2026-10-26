@@ -127,29 +127,42 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           return;
         }
 
+        const pairing = result.pairing;
         const requester = participants.requester;
         const target = participants.target;
-        io.to(requester.socketId).emit('pairing_confirmed', {
-          pairingId: payload.pairingId,
-          confirmationCode: result.pairing.confirmationCode,
-          initiator: true,
+        const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
+        const targetSocketId = pairing.targetSocketId;
+
+        const confirmationPayload = {
+          pairingId: pairing.pairingId,
+          id: pairing.pairingId,
+          initiatorSocketId,
+          targetSocketId,
+          confirmationCode: pairing.confirmationCode,
+          confirmationState: result.confirmationState
+        };
+
+        io.to(initiatorSocketId).emit('pairing_confirmed', {
+          ...confirmationPayload,
           role: 'initiator',
-          peerId: target.peerId,
-          targetSocketId: target.socketId,
-          otherSocketId: target.socketId,
+          initiator: true,
+          partnerSocketId: targetSocketId,
+          partnerName: target.deviceName,
           deviceName: target.deviceName,
-          confirmationState: result.confirmationState
+          peerId: target.peerId,
+          targetSocketId,
+          otherSocketId: targetSocketId
         });
-        io.to(target.socketId).emit('pairing_confirmed', {
-          pairingId: payload.pairingId,
-          confirmationCode: result.pairing.confirmationCode,
-          initiator: false,
+        io.to(targetSocketId).emit('pairing_confirmed', {
+          ...confirmationPayload,
           role: 'receiver',
-          peerId: requester.peerId,
-          targetSocketId: requester.socketId,
-          otherSocketId: requester.socketId,
+          initiator: false,
+          partnerSocketId: initiatorSocketId,
+          partnerName: requester.deviceName,
           deviceName: requester.deviceName,
-          confirmationState: result.confirmationState
+          peerId: requester.peerId,
+          targetSocketId: initiatorSocketId,
+          otherSocketId: initiatorSocketId
         });
       } catch (error) {
         socket.emit('pairing_error', {
