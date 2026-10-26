@@ -67,32 +67,30 @@ test('Guarantees distinct partner sockets and bidirectional webrtc signal relay'
     assert.notEqual(confirmedA.partnerSocketId, socketA.id, 'Socket A partnerSocketId must not be its own socket ID');
     assert.notEqual(confirmedB.partnerSocketId, socketB.id, 'Socket B partnerSocketId must not be its own socket ID');
 
-    // 5. Emit offer from Socket A via roomId and verify Socket B receives it
+    // 5. Emit offer from Socket A via pairingId and verify Socket B receives it
     const signalReceivedByB = new Promise((resolve) => {
       socketB.once('webrtc_signal', resolve);
     });
 
     socketA.emit('webrtc_signal', {
-      roomId: confirmedA.roomId,
+      pairingId: confirmedA.pairingId,
       signal: { type: 'offer', sdp: 'v=0\r\no=alice 123 2 IN IP4 127.0.0.1' }
     });
 
     const receivedOffer = await signalReceivedByB;
-    assert.equal(receivedOffer.senderSocketId, socketA.id);
     assert.equal(receivedOffer.signal?.type || receivedOffer.type, 'offer');
 
-    // 6. Emit answer from Socket B via roomId and verify Socket A receives it
+    // 6. Emit answer from Socket B via pairingId and verify Socket A receives it
     const signalReceivedByA = new Promise((resolve) => {
       socketA.once('webrtc_signal', resolve);
     });
 
     socketB.emit('webrtc_signal', {
-      roomId: confirmedB.roomId,
+      pairingId: confirmedB.pairingId,
       signal: { type: 'answer', sdp: 'v=0\r\no=bob 456 2 IN IP4 127.0.0.1' }
     });
 
     const receivedAnswer = await signalReceivedByA;
-    assert.equal(receivedAnswer.senderSocketId, socketB.id);
     assert.equal(receivedAnswer.signal?.type || receivedAnswer.type, 'answer');
 
     // 7. Assert self-loop signaling is blocked

@@ -239,74 +239,49 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
       }
     });
 
-    const handleSignalRelay = (payload = {}) => {
-      let roomId = payload.roomId;
-      const pairing = peerManager.getPairingForSocket(socket.id);
-      if (!roomId && pairing) {
-        roomId = `room_${pairing.id || pairing.pairingId}`;
+    socket.on('webrtc_signal', ({ pairingId, signal } = {}) => {
+      if (!signal) return;
+
+      const targetPairingId = pairingId;
+      const pairing = (targetPairingId ? peerManager.getPairing(targetPairingId) : null) || peerManager.getPairingForSocket(socket.id);
+      if (!pairing) {
+        console.warn(`[Signaling] No active pairing found for ID: ${targetPairingId || socket.id}`);
+        return;
       }
 
+      // Determine partner
+      const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
+      const recipientSocketId = socket.id === initiatorSocketId
+        ? pairing.targetSocketId
+        : initiatorSocketId;
+
+      if (recipientSocketId && recipientSocketId !== socket.id) {
+        const signalType = signal?.type || (signal?.candidate ? 'candidate' : 'signal');
+        console.log(`[Signaling] ⚡ Relaying '${signalType}' from ${socket.id} to partner ${recipientSocketId}`);
+        io.to(recipientSocketId).emit('webrtc_signal', { signal });
+      } else {
+        console.warn(`[Signaling] Blocked invalid signal or could not find partner for ${socket.id}`);
+      }
+    });
+
+    socket.on('signal', (payload = {}) => {
+      const pairingId = payload.pairingId;
       const signal = payload.signal !== undefined ? payload.signal : (payload.data !== undefined ? payload.data : payload);
-      const signalType = payload.type || signal?.type || (signal?.candidate ? 'candidate' : 'signal');
+      if (!signal) return;
 
-      if (roomId) {
-        console.log(`[Signaling] ⚡ Broadcasting '${signalType}' from ${socket.id} to room ${roomId}`);
-        const envelope = {
-          roomId,
-          pairingId: pairing?.pairingId || payload.pairingId || pairing?.id,
-          senderSocketId: socket.id,
-          type: signalType,
-          data: signal,
-          signal
-        };
-        if (typeof socket.to === 'function') {
-          socket.to(roomId).emit('webrtc_signal', envelope);
-          socket.to(roomId).emit('signal', envelope);
-        } else if (typeof io.to === 'function') {
-          io.to(roomId).emit('webrtc_signal', envelope);
-          io.to(roomId).emit('signal', envelope);
-        }
-        return;
+      const pairing = (pairingId ? peerManager.getPairing(pairingId) : null) || peerManager.getPairingForSocket(socket.id);
+      if (!pairing) return;
+
+      const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
+      const recipientSocketId = socket.id === initiatorSocketId
+        ? pairing.targetSocketId
+        : initiatorSocketId;
+
+      if (recipientSocketId && recipientSocketId !== socket.id) {
+        io.to(recipientSocketId).emit('webrtc_signal', { signal });
+        io.to(recipientSocketId).emit('signal', { signal });
       }
-
-      let targetSocketId = payload.targetSocketId || payload.otherSocketId;
-      if (!targetSocketId && pairing) {
-        const initiatorId = pairing.initiatorSocketId || pairing.requesterSocketId;
-        targetSocketId = initiatorId === socket.id
-          ? pairing.targetSocketId
-          : initiatorId;
-      }
-
-      if (!targetSocketId) {
-        socket.emit('pairing_error', {
-          code: 'SIGNALING_NOT_AVAILABLE',
-          message: 'The WebRTC signaling session is no longer available.'
-        });
-        return;
-      }
-
-      if (targetSocketId === socket.id) {
-        console.warn(`[Signaling] Blocked invalid signal from ${socket.id} to target ${targetSocketId}`);
-        return;
-      }
-
-      console.log(`[Signaling] ⚡ Relaying '${signalType}' from ${socket.id} to ${targetSocketId}`);
-
-      const envelope = {
-        pairingId: pairing?.pairingId || payload.pairingId || pairing?.id,
-        senderSocketId: socket.id,
-        targetSocketId,
-        type: signalType,
-        data: signal,
-        signal
-      };
-
-      io.to(targetSocketId).emit('webrtc_signal', envelope);
-      io.to(targetSocketId).emit('signal', envelope);
-    };
-
-    socket.on('webrtc_signal', handleSignalRelay);
-    socket.on('signal', handleSignalRelay);
+    });
 
     socket.on('webrtc_ready', (payload = {}) => {
       try {

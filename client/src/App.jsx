@@ -158,45 +158,21 @@ export default function App() {
     pending.resolve(null);
   }, []);
 
-  const sendSignal = useCallback((payload, maybeData) => {
-    let roomId = roomIdRef.current;
-    let targetSocketId = partnerSocketIdRef.current;
-    let signal = payload;
-
-    if (payload && typeof payload === 'object' && payload.signal !== undefined) {
-      roomId = payload.roomId || roomId;
-      targetSocketId = payload.targetSocketId || targetSocketId;
-      signal = payload.signal;
-    } else if (maybeData !== undefined) {
-      signal = maybeData;
-    }
-
+  const sendSignal = useCallback(({ pairingId, signal }) => {
+    const id = pairingId || currentPairingIdRef.current;
     const signalType = signal?.type || (signal?.candidate ? 'candidate' : 'signal');
-    console.log(`[WebRTC] Emitting webrtc_signal to room ${roomId || targetSocketId}:`, signalType);
+    console.log(`[WebRTC] Emitting 'webrtc_signal' for pairing ${id}:`, signalType);
 
-    const envelope = {
-      roomId,
-      targetSocketId,
-      pairingId: currentPairingIdRef.current,
-      type: signalType,
-      data: signal,
+    emitSocket('webrtc_signal', {
+      pairingId: id,
       signal
-    };
-
-    emitSocket('webrtc_signal', envelope);
-    emitSocket('signal', envelope);
+    });
   }, []);
 
-  const handleIncomingSignal = useCallback(async (payload) => {
-    const signal = payload?.signal !== undefined ? payload.signal : (payload?.data !== undefined ? payload.data : payload);
-    const signalType = payload?.type || signal?.type || (signal?.candidate ? 'ice-candidate' : 'signal');
-
-    const senderSocketId = payload?.senderSocketId;
-    if (senderSocketId && !partnerSocketIdRef.current) {
-      console.log(`[WebRTC] Storing partnerSocketId from incoming signal: ${senderSocketId}`);
-      partnerSocketIdRef.current = senderSocketId;
-      setPartnerSocketId(senderSocketId);
-    }
+  const handleIncomingSignal = useCallback(async ({ signal } = {}) => {
+    if (!signal) return;
+    const signalType = signal?.type || (signal?.candidate ? 'candidate' : 'signal');
+    console.log(`[WebRTC] ⚡ Received 'webrtc_signal':`, signalType);
 
     if (!sessionRef.current) {
       console.log(`[WebRTC] Session not ready yet. Buffering signal: ${signalType}`);
@@ -262,12 +238,12 @@ export default function App() {
     }
   }, [showNotice]);
 
-  const startWebRtc = useCallback(async ({ role, roomId, pairingId, partnerSocketId }) => {
+  const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId }) => {
     sessionRef.current?.close();
-    console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Room: ${roomId}, Partner: ${partnerSocketId}`);
+    console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Pairing: ${pairingId}`);
     const session = new WebRtcSession({
       role,
-      roomId: roomId || roomIdRef.current,
+      pairingId: pairingId || currentPairingIdRef.current,
       partnerSocketId: partnerSocketId || partnerSocketIdRef.current,
       onMessage: handleChannelMessage,
       onSignal: sendSignal,
@@ -349,17 +325,14 @@ export default function App() {
     console.log('[Signaling] ⚡ Received pairing_confirmed event:', payload);
     try {
       const pairingId = payload.pairingId || payload.id;
-      const roomId = payload.roomId || (pairingId ? `room_${pairingId}` : null);
       const role = payload.role || (payload.initiator ? 'initiator' : 'receiver');
       const targetSocketId = payload.partnerSocketId || (role === 'initiator' ? payload.targetSocketId : payload.initiatorSocketId) || payload.otherSocketId;
 
       const partnerName = payload.partnerName || payload.deviceName || 'device';
 
-      console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Room: ${roomId}, Partner: ${partnerName}`);
+      console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Partner: ${partnerName}`);
 
       currentPairingIdRef.current = pairingId;
-      roomIdRef.current = roomId;
-      setRoomId(roomId);
       partnerSocketIdRef.current = targetSocketId;
       setPartnerSocketId(targetSocketId);
       webrtcRoleRef.current = role;
@@ -370,8 +343,7 @@ export default function App() {
       setSelectedPeer({
         ...payload,
         pairingId,
-        roomId,
-        targetSocketId,
+        targetSocketId: partnerSocketIdRef.current,
         partnerSocketId: targetSocketId,
         role,
         deviceName: partnerName,
@@ -395,7 +367,6 @@ export default function App() {
 
       await startWebRtc({
         role,
-        roomId,
         pairingId,
         partnerSocketId: targetSocketId
       });

@@ -64,28 +64,26 @@ test('End-to-end signaling relays offer, answer, and ICE candidates bidirectiona
 
     socketA.emit('webrtc_signal', {
       pairingId: confirmedA.pairingId,
-      type: 'offer',
-      data: { type: 'offer', sdp: 'v=0\r\no=initiator 12345 2 IN IP4 127.0.0.1' }
+      signal: { type: 'offer', sdp: 'v=0\r\no=initiator 12345 2 IN IP4 127.0.0.1' }
     });
 
     const receivedOffer = await offerReceivedByB;
-    assert.equal(receivedOffer.type, 'offer');
-    assert.equal(receivedOffer.data.sdp, 'v=0\r\no=initiator 12345 2 IN IP4 127.0.0.1');
+    assert.equal(receivedOffer.signal.type, 'offer');
+    assert.equal(receivedOffer.signal.sdp, 'v=0\r\no=initiator 12345 2 IN IP4 127.0.0.1');
 
-    // 5. Test Receiver -> Initiator Answer Relay (also testing 'signal' event name)
+    // 5. Test Receiver -> Initiator Answer Relay
     const answerReceivedByA = new Promise((resolve) => {
-      socketA.once('signal', (payload) => resolve(payload));
+      socketA.once('webrtc_signal', (payload) => resolve(payload));
     });
 
-    socketB.emit('signal', {
+    socketB.emit('webrtc_signal', {
       pairingId: confirmedB.pairingId,
-      type: 'answer',
       signal: { type: 'answer', sdp: 'v=0\r\no=receiver 67890 2 IN IP4 127.0.0.1' }
     });
 
     const receivedAnswer = await answerReceivedByA;
-    assert.equal(receivedAnswer.type, 'answer');
-    assert.equal(receivedAnswer.data.sdp, 'v=0\r\no=receiver 67890 2 IN IP4 127.0.0.1');
+    assert.equal(receivedAnswer.signal.type, 'answer');
+    assert.equal(receivedAnswer.signal.sdp, 'v=0\r\no=receiver 67890 2 IN IP4 127.0.0.1');
 
     // 6. Test Bidirectional ICE Candidate Relay
     const candidateReceivedByB = new Promise((resolve) => {
@@ -94,27 +92,25 @@ test('End-to-end signaling relays offer, answer, and ICE candidates bidirectiona
 
     socketA.emit('webrtc_signal', {
       pairingId: confirmedA.pairingId,
-      type: 'ice-candidate',
-      data: { candidate: 'candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 }
+      signal: { type: 'candidate', candidate: { candidate: 'candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 } }
     });
 
     const receivedCandidateB = await candidateReceivedByB;
-    assert.equal(receivedCandidateB.type, 'ice-candidate');
-    assert.equal(receivedCandidateB.data.candidate, 'candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ host');
+    assert.equal(receivedCandidateB.signal.type, 'candidate');
+    assert.equal(receivedCandidateB.signal.candidate.candidate, 'candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ host');
 
     const candidateReceivedByA = new Promise((resolve) => {
-      socketA.once('signal', (payload) => resolve(payload));
+      socketA.once('webrtc_signal', (payload) => resolve(payload));
     });
 
-    socketB.emit('signal', {
+    socketB.emit('webrtc_signal', {
       pairingId: confirmedB.pairingId,
-      type: 'ice-candidate',
-      signal: { candidate: 'candidate:2 1 UDP 2122260223 10.0.0.5 50001 typ host', sdpMid: '0', sdpMLineIndex: 0 }
+      signal: { type: 'candidate', candidate: { candidate: 'candidate:2 1 UDP 2122260223 10.0.0.5 50001 typ host', sdpMid: '0', sdpMLineIndex: 0 } }
     });
 
     const receivedCandidateA = await candidateReceivedByA;
-    assert.equal(receivedCandidateA.type, 'ice-candidate');
-    assert.equal(receivedCandidateA.data.candidate, 'candidate:2 1 UDP 2122260223 10.0.0.5 50001 typ host');
+    assert.equal(receivedCandidateA.signal.type, 'candidate');
+    assert.equal(receivedCandidateA.signal.candidate.candidate, 'candidate:2 1 UDP 2122260223 10.0.0.5 50001 typ host');
 
     console.log('✔ All end-to-end signaling relay checks succeeded');
   } finally {
