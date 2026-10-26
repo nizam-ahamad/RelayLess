@@ -324,8 +324,8 @@ export default function App() {
     console.log('[Signaling] ⚡ Received pairing_confirmed event:', payload);
     try {
       const pairingId = payload.pairingId || payload.id;
-      const targetSocketId = payload.partnerSocketId || payload.targetSocketId || payload.otherSocketId;
       const role = payload.role || (payload.initiator ? 'initiator' : 'receiver');
+      const targetSocketId = payload.partnerSocketId || (role === 'initiator' ? payload.targetSocketId : payload.initiatorSocketId) || payload.otherSocketId;
       const partnerName = payload.partnerName || payload.deviceName || 'device';
 
       console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Partner Socket: ${targetSocketId}, Partner Name: ${partnerName}`);
@@ -358,10 +358,10 @@ export default function App() {
       connectionTimeoutRef.current = setTimeout(() => {
         const channel = sessionRef.current?.dataChannel;
         if (!channel || channel.readyState !== 'open') {
-          console.warn('[WebRTC] Connection watchdog timed out after 15 seconds');
+          console.warn('[WebRTC] Connection watchdog timed out after 25 seconds');
           closeSession('Connection timed out. Could not establish P2P bridge with other device.');
         }
-      }, 15000);
+      }, 25000);
 
       await startWebRtc({
         role,

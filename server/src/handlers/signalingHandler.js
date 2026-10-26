@@ -36,12 +36,23 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
       }
 
       try {
-        const requester = peerManager.getBySocketId(socket.id);
-        const target = targetPeerId
-          ? peerManager.getByPeerId(targetPeerId)
-          : (pin ? peerManager.getByPin(pin) : null);
+        const initiatorPeer = peerManager.getPeerBySocketId ? peerManager.getPeerBySocketId(socket.id) : peerManager.getBySocketId(socket.id);
+        const targetPeer = targetPeerId
+          ? (peerManager.getPeerByPeerId ? peerManager.getPeerByPeerId(targetPeerId) : peerManager.getByPeerId(targetPeerId))
+          : (pin ? (peerManager.getPeerByPin ? peerManager.getPeerByPin(pin) : peerManager.getByPin(pin)) : null);
 
-        if (target && requester && (target.socketId === requester.socketId || target.peerId === requester.peerId)) {
+        if (!targetPeer) {
+          rateLimiter.recordFailure(...rateLimitKeys);
+          const response = {
+            code: 'TARGET_NOT_FOUND',
+            message: 'No device was found for that PIN or QR link.'
+          };
+          socket.emit('pairing_error', response);
+          acknowledgement?.({ ok: false, ...response });
+          return;
+        }
+
+        if (initiatorPeer && (targetPeer.socketId === initiatorPeer.socketId || targetPeer.peerId === initiatorPeer.peerId)) {
           rateLimiter.recordFailure(...rateLimitKeys);
           const response = {
             code: 'SELF_PAIRING',
@@ -52,29 +63,26 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           return;
         }
 
-        const pairing = peerManager.createPairing(socket.id, {
-          peerId: targetPeerId,
-          pin
-        });
+        const pairing = peerManager.createPairing(initiatorPeer, targetPeer);
         rateLimiter.recordSuccess(...rateLimitKeys);
 
         const participants = peerManager.getPairingPeers(pairing.pairingId);
         const requesterPeer = participants.requester;
-        const targetPeer = participants.target;
+        const targetPeerObj = participants.target;
         const prompt = {
           pairingId: pairing.pairingId,
           confirmationCode: pairing.confirmationCode,
           expiresIn: 120,
-          requester: pairingParticipant(requesterPeer, targetPeer),
-          target: pairingParticipant(targetPeer, requesterPeer)
+          requester: pairingParticipant(requesterPeer, targetPeerObj),
+          target: pairingParticipant(targetPeerObj, requesterPeer)
         };
 
         io.to(requesterPeer.socketId).emit('pairing_prompt', {
           ...prompt,
           role: 'requester',
-          otherDeviceName: targetPeer.deviceName
+          otherDeviceName: targetPeerObj.deviceName
         });
-        io.to(targetPeer.socketId).emit('pairing_prompt', {
+        io.to(targetPeerObj.socketId).emit('pairing_prompt', {
           ...prompt,
           role: 'target',
           otherDeviceName: requesterPeer.deviceName
@@ -133,36 +141,36 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
         const targetSocketId = pairing.targetSocketId;
 
-        const confirmationPayload = {
-          pairingId: pairing.pairingId,
-          id: pairing.pairingId,
-          initiatorSocketId,
-          targetSocketId,
-          confirmationCode: pairing.confirmationCode,
-          confirmationState: result.confirmationState
-        };
+        console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId}`);
 
         io.to(initiatorSocketId).emit('pairing_confirmed', {
-          ...confirmationPayload,
+          pairingId: pairing.id || pairing.pairingId,
+          id: pairing.id || pairing.pairingId,
           role: 'initiator',
           initiator: true,
-          partnerSocketId: targetSocketId,
-          partnerName: target.deviceName,
-          deviceName: target.deviceName,
-          peerId: target.peerId,
+          initiatorSocketId,
           targetSocketId,
-          otherSocketId: targetSocketId
+          partnerSocketId: targetSocketId,
+          partnerName: target.deviceName || pairing.targetDeviceName,
+          deviceName: target.deviceName || pairing.targetDeviceName,
+          peerId: target.peerId,
+          confirmationCode: pairing.confirmationCode,
+          confirmationState: result.confirmationState
         });
+
         io.to(targetSocketId).emit('pairing_confirmed', {
-          ...confirmationPayload,
+          pairingId: pairing.id || pairing.pairingId,
+          id: pairing.id || pairing.pairingId,
           role: 'receiver',
           initiator: false,
+          initiatorSocketId,
+          targetSocketId,
           partnerSocketId: initiatorSocketId,
-          partnerName: requester.deviceName,
-          deviceName: requester.deviceName,
+          partnerName: requester.deviceName || pairing.initiatorDeviceName,
+          deviceName: requester.deviceName || pairing.initiatorDeviceName,
           peerId: requester.peerId,
-          targetSocketId: initiatorSocketId,
-          otherSocketId: initiatorSocketId
+          confirmationCode: pairing.confirmationCode,
+          confirmationState: result.confirmationState
         });
       } catch (error) {
         socket.emit('pairing_error', {
@@ -213,12 +221,17 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return;
       }
 
+      if (targetSocketId === socket.id) {
+        console.warn(`[Signaling] ⚠️ Prevented self-loop signal on socket ${socket.id}`);
+        return;
+      }
+
       const signal = payload.signal !== undefined ? payload.signal : (payload.data !== undefined ? payload.data : payload);
       const signalType = payload.type || signal?.type || (signal?.candidate ? 'candidate' : 'signal');
       console.log(`[Signaling] ⚡ Relaying '${signalType}' from ${socket.id} to ${targetSocketId}`);
 
       const envelope = {
-        pairingId: pairing?.pairingId || payload.pairingId,
+        pairingId: pairing?.pairingId || payload.pairingId || pairing?.id,
         senderSocketId: socket.id,
         targetSocketId,
         type: signalType,

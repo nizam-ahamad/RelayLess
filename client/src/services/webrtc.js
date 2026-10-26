@@ -201,21 +201,29 @@ export class WebRtcSession {
 
     if (signalType === 'offer') {
       console.log('[WebRTC] Received offer, creating & sending answer...');
-      const sessionDesc = signalPayload?.sdp ? signalPayload : { type: 'offer', sdp: signalPayload?.sdp || signalPayload };
+      const sessionDesc = signalPayload?.sdp?.type
+        ? signalPayload.sdp
+        : (typeof signalPayload?.sdp === 'string'
+            ? { type: 'offer', sdp: signalPayload.sdp }
+            : (signalPayload?.type ? signalPayload : { type: 'offer', sdp: signalPayload }));
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
       await this.processCandidateQueue();
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
       this.emitSignal({
-        type: answer.type || 'answer',
-        sdp: answer.sdp
+        type: 'answer',
+        sdp: answer.sdp || answer
       });
       return;
     }
 
     if (signalType === 'answer') {
       console.log('[WebRTC] Received answer, setting remote description...');
-      const sessionDesc = signalPayload?.sdp ? signalPayload : { type: 'answer', sdp: signalPayload?.sdp || signalPayload };
+      const sessionDesc = signalPayload?.sdp?.type
+        ? signalPayload.sdp
+        : (typeof signalPayload?.sdp === 'string'
+            ? { type: 'answer', sdp: signalPayload.sdp }
+            : (signalPayload?.type ? signalPayload : { type: 'answer', sdp: signalPayload }));
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
       await this.processCandidateQueue();
       return;

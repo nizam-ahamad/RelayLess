@@ -37,6 +37,18 @@ export class PeerManager {
     return peerId ? this.getByPeerId(peerId) : null;
   }
 
+  getPeerBySocketId(socketId) {
+    return this.getBySocketId(socketId);
+  }
+
+  getPeerByPeerId(peerId) {
+    return this.getByPeerId(peerId);
+  }
+
+  getPeerByPin(pin) {
+    return this.getByPin(pin);
+  }
+
   setDeviceName(socketId, deviceName) {
     const peer = this.getBySocketId(socketId);
     if (!peer) {
@@ -65,32 +77,54 @@ export class PeerManager {
     };
   }
 
-  createPairing(requesterSocketId, { peerId, pin } = {}) {
-    const requester = this.getBySocketId(requesterSocketId);
+  createPairing(initiatorParam, targetParam) {
+    let requester;
+    let target;
+
+    if (typeof initiatorParam === 'string') {
+      requester = this.getBySocketId(initiatorParam);
+      const opts = targetParam || {};
+      target = opts.peerId ? this.getByPeerId(opts.peerId) : (opts.pin ? this.getByPin(opts.pin) : null);
+    } else {
+      const initSocketId = initiatorParam?.socketId || initiatorParam?.id;
+      requester = initSocketId ? this.getBySocketId(initSocketId) : initiatorParam;
+      const targetSocketId = targetParam?.socketId || targetParam?.id;
+      target = targetSocketId ? this.getBySocketId(targetSocketId) : targetParam;
+    }
+
     if (!requester) {
       throw this.#error('REQUESTER_NOT_FOUND', 'Your signaling session is no longer active.');
     }
     if (requester.pairingId) {
       throw this.#error('ALREADY_PAIRING', 'This device is already pairing.');
     }
-
-    const target = peerId ? this.getByPeerId(peerId) : this.getByPin(pin);
     if (!target) {
       throw this.#error('TARGET_NOT_FOUND', 'No device was found for that PIN or QR link.');
     }
-    if (target.socketId === requester.socketId || target.peerId === requester.peerId) {
+
+    const initiatorSocketId = requester.socketId || requester.id;
+    const targetSocketId = target.socketId || target.id;
+
+    if (!initiatorSocketId || !targetSocketId || initiatorSocketId === targetSocketId || (target.peerId && requester.peerId && target.peerId === requester.peerId)) {
       throw this.#error('SELF_PAIRING', 'Cannot pair with your own device');
     }
+
     if (target.pairingId) {
       throw this.#error('TARGET_BUSY', 'That device is already pairing with someone else.');
     }
 
+    const pairingId = randomUUID();
     const pairing = {
-      pairingId: randomUUID(),
+      id: pairingId,
+      pairingId,
       confirmationCode: String(randomInt(0, 100)).padStart(2, '0'),
-      requesterSocketId: requester.socketId,
-      initiatorSocketId: requester.socketId,
-      targetSocketId: target.socketId,
+      requesterSocketId: initiatorSocketId,
+      initiatorSocketId,
+      targetSocketId,
+      initiatorPeerId: requester.peerId || requester.id,
+      targetPeerId: target.peerId || target.id,
+      initiatorDeviceName: requester.deviceName || 'Initiator',
+      targetDeviceName: target.deviceName || 'Receiver',
       createdAt: Date.now(),
       confirmationState: {
         requester: false,
@@ -103,9 +137,12 @@ export class PeerManager {
 
     requester.pairingId = pairing.pairingId;
     target.pairingId = pairing.pairingId;
-    this.pinManager.setPaused(requester.peerId, true);
-    this.pinManager.setPaused(target.peerId, true);
+    if (this.pinManager) {
+      this.pinManager.setPaused(requester.peerId, true);
+      this.pinManager.setPaused(target.peerId, true);
+    }
     this.pairings.set(pairing.pairingId, pairing);
+    this.pairings.set(pairing.id, pairing);
     return pairing;
   }
 
