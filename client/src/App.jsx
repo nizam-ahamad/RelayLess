@@ -238,9 +238,10 @@ export default function App() {
     }
   }, [showNotice]);
 
-  const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId }) => {
+  const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId, partnerName }) => {
     sessionRef.current?.close();
     console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Pairing: ${pairingId}`);
+    const targetName = partnerName || 'device';
     const session = new WebRtcSession({
       role,
       pairingId: pairingId || currentPairingIdRef.current,
@@ -255,7 +256,7 @@ export default function App() {
         console.log('[WebRTC] ⚡ DataChannel OPENED! Setting connectionState = connected.');
         setConnectionState('connected');
         emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
-        showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'device'}.`);
+        showNotice('success', `Direct encrypted bridge established with ${targetName}.`);
 
         if (pendingFilesRef.current) {
           const queuedFiles = pendingFilesRef.current;
@@ -274,7 +275,7 @@ export default function App() {
           console.log('[WebRTC] ⚡ DataChannel OPENED! Setting connectionState = connected.');
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
-          showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'device'}.`);
+          showNotice('success', `Direct encrypted bridge established with ${targetName}.`);
 
           if (pendingFilesRef.current) {
             const queuedFiles = pendingFilesRef.current;
@@ -319,7 +320,7 @@ export default function App() {
         }
       }
     }
-  }, [handleChannelMessage, selectedPeer?.deviceName, selectedPeer?.partnerName, sendSignal, showNotice]);
+  }, [handleChannelMessage, sendSignal, showNotice]);
 
   const handlePairingConfirmed = useCallback(async (payload) => {
     console.log('[Signaling] ⚡ Received pairing_confirmed event:', payload);
@@ -368,7 +369,8 @@ export default function App() {
       await startWebRtc({
         role,
         pairingId,
-        partnerSocketId: targetSocketId
+        partnerSocketId: targetSocketId,
+        partnerName
       });
     } catch (error) {
       console.error('[Signaling] Fatal error in handlePairingConfirmed:', error);
@@ -376,6 +378,18 @@ export default function App() {
       setConnectionState('failed');
     }
   }, [closeSession, startWebRtc, showNotice]);
+
+  const handlePairingConfirmedRef = useRef(handlePairingConfirmed);
+  handlePairingConfirmedRef.current = handlePairingConfirmed;
+
+  const handleIncomingSignalRef = useRef(handleIncomingSignal);
+  handleIncomingSignalRef.current = handleIncomingSignal;
+
+  const closeSessionRef = useRef(closeSession);
+  closeSessionRef.current = closeSession;
+
+  const showNoticeRef = useRef(showNotice);
+  showNoticeRef.current = showNotice;
 
   useEffect(() => {
     localStorage.setItem('p2p-device-name', deviceName);
@@ -401,7 +415,7 @@ export default function App() {
       onSocketEvent('connect', () => setConnectionState((current) => current === 'connecting' ? 'ready' : current)),
       onSocketEvent('disconnect', () => {
         setConnectionState('offline');
-        showNotice('error', 'Signaling server disconnected. Retrying automatically…');
+        showNoticeRef.current('error', 'Signaling server disconnected. Retrying automatically…');
       }),
       onSocketEvent('connect_error', () => setConnectionState('offline')),
       onSocketEvent('peer_ready', (nextPeer) => {
@@ -420,25 +434,25 @@ export default function App() {
         setConnectionState('pairing');
       }),
       onSocketEvent('pairing_acknowledged', (payload) => {
-        showNotice('info', `The ${payload.approvedByRole === 'requester' ? 'requesting' : 'receiving'} device approved. Confirm on your screen to continue.`);
+        showNoticeRef.current('info', `The ${payload.approvedByRole === 'requester' ? 'requesting' : 'receiving'} device approved. Confirm on your screen to continue.`);
       }),
-      onSocketEvent('pairing_confirmed', handlePairingConfirmed),
-      onSocketEvent('webrtc_signal', handleIncomingSignal),
-      onSocketEvent('signal', handleIncomingSignal),
+      onSocketEvent('pairing_confirmed', (payload) => handlePairingConfirmedRef.current(payload)),
+      onSocketEvent('webrtc_signal', (payload) => handleIncomingSignalRef.current(payload)),
+      onSocketEvent('signal', (payload) => handleIncomingSignalRef.current(payload)),
       onSocketEvent('connection_ready', (payload) => {
         setSelectedPeer(payload);
         setConnectionState('connected');
-        showNotice('success', `Connected directly to ${payload.deviceName}.`);
+        showNoticeRef.current('success', `Connected directly to ${payload.deviceName}.`);
       }),
       onSocketEvent('pairing_error', (error) => {
         setPrompt(null);
         setWaitingForAcceptance(false);
         setConnectionState('ready');
-        showNotice('error', error.message || 'Unable to start pairing.');
+        showNoticeRef.current('error', error.message || 'Unable to start pairing.');
       }),
-      onSocketEvent('pairing_rejected', (payload) => closeSession(payload.message)),
-      onSocketEvent('pairing_cancelled', (payload) => closeSession(payload.message)),
-      onSocketEvent('peer_disconnected', () => closeSession('The other device disconnected.'))
+      onSocketEvent('pairing_rejected', (payload) => closeSessionRef.current(payload.message)),
+      onSocketEvent('pairing_cancelled', (payload) => closeSessionRef.current(payload.message)),
+      onSocketEvent('peer_disconnected', () => closeSessionRef.current('The other device disconnected.'))
     ];
 
     if (pairPeerId) {
@@ -452,7 +466,7 @@ export default function App() {
       cleanups.forEach((cleanup) => cleanup());
       sessionRef.current?.close();
     };
-  }, [closeSession, handlePairingConfirmed, pairPeerId, showNotice]);
+  }, [pairPeerId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

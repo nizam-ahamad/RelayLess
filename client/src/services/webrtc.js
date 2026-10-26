@@ -91,28 +91,33 @@ export class WebRtcSession {
       }
     };
 
-    // Receiver: Set pc.ondatachannel = (e) => setupDataChannel(e.channel)
-    this.peerConnection.ondatachannel = (e) => {
-      console.log('[WebRTC] ondatachannel received on receiver!');
-      this.setupDataChannel(e.channel);
+    // Receiver: Set pc.ondatachannel = (event) => setupDataChannel(event.channel)
+    this.peerConnection.ondatachannel = (event) => {
+      console.log('[WebRTC ⚡] Receiver received remote DataChannel!');
+      this.setupDataChannel(event.channel);
     };
 
     // Initiator: createDataChannel, createOffer, emit offer
     if (this.role === 'initiator') {
-      console.log('[WebRTC] Creating DataChannel before creating offer...');
-      const channel = this.peerConnection.createDataChannel('fileTransfer', {
-        ordered: true
-      });
-      this.setupDataChannel(channel);
+      try {
+        console.log('[WebRTC 🚀] Initiator initializing DataChannel & Offer...');
+        const channel = this.peerConnection.createDataChannel('fileTransfer', {
+          ordered: true
+        });
+        this.setupDataChannel(channel);
 
-      const offer = await this.peerConnection.createOffer();
-      await this.peerConnection.setLocalDescription(offer);
+        const offer = await this.peerConnection.createOffer();
+        await this.peerConnection.setLocalDescription(offer);
 
-      console.log('[WebRTC] 📤 Emitting offer for pairing:', this.pairingId);
-      this.sendSignal({
-        type: 'offer',
-        sdp: offer
-      });
+        console.log('[WebRTC 📤] Emitting offer to server...');
+        this.sendSignal({
+          type: 'offer',
+          sdp: offer
+        });
+      } catch (err) {
+        console.error('[WebRTC ❌] Initiator setup failed:', err);
+        this.onError?.(err);
+      }
     }
   }
 
@@ -202,36 +207,46 @@ export class WebRtcSession {
     const signalType = signal.type || (signal.candidate ? 'candidate' : (signalOrEnvelope?.type ?? null));
 
     if (signalType === 'offer') {
-      console.log('[WebRTC] 📥 Received offer! Creating answer...');
-      const sdpData = signal.sdp || signal;
-      const sessionDesc = sdpData?.type
-        ? sdpData
-        : (typeof sdpData === 'string'
-            ? { type: 'offer', sdp: sdpData }
-            : (signal?.type ? signal : { type: 'offer', sdp: sdpData }));
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
-      await this.processCandidateQueue();
-      const answer = await this.peerConnection.createAnswer();
-      await this.peerConnection.setLocalDescription(answer);
+      try {
+        console.log('[WebRTC 📥] Receiver got offer! Creating answer...');
+        const sdpData = signal.sdp || signal;
+        const sessionDesc = sdpData?.type
+          ? sdpData
+          : (typeof sdpData === 'string'
+              ? { type: 'offer', sdp: sdpData }
+              : (signal?.type ? signal : { type: 'offer', sdp: sdpData }));
+        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
+        await this.processCandidateQueue();
+        const answer = await this.peerConnection.createAnswer();
+        await this.peerConnection.setLocalDescription(answer);
 
-      console.log('[WebRTC] 📤 Emitting answer for pairing:', this.pairingId);
-      this.sendSignal({
-        type: 'answer',
-        sdp: answer
-      });
+        console.log('[WebRTC 📤] Emitting answer to server...');
+        this.sendSignal({
+          type: 'answer',
+          sdp: answer
+        });
+      } catch (err) {
+        console.error('[WebRTC ❌] Receiver failed to handle offer:', err);
+        this.onError?.(err);
+      }
       return;
     }
 
     if (signalType === 'answer') {
-      console.log('[WebRTC] 📥 Received answer! Setting remote description...');
-      const sdpData = signal.sdp || signal;
-      const sessionDesc = sdpData?.type
-        ? sdpData
-        : (typeof sdpData === 'string'
-            ? { type: 'answer', sdp: sdpData }
-            : (signal?.type ? signal : { type: 'answer', sdp: sdpData }));
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
-      await this.processCandidateQueue();
+      try {
+        console.log('[WebRTC 📥] Initiator got answer! Setting remote description...');
+        const sdpData = signal.sdp || signal;
+        const sessionDesc = sdpData?.type
+          ? sdpData
+          : (typeof sdpData === 'string'
+              ? { type: 'answer', sdp: sdpData }
+              : (signal?.type ? signal : { type: 'answer', sdp: sdpData }));
+        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
+        await this.processCandidateQueue();
+      } catch (err) {
+        console.error('[WebRTC ❌] Initiator failed to handle answer:', err);
+        this.onError?.(err);
+      }
       return;
     }
 

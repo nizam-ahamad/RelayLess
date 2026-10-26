@@ -155,11 +155,17 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         const initiatorSocket = getSocket(initiatorSocketId);
         const targetSocket = getSocket(targetSocketId);
 
-        const roomName = `room_${pairing.id || pairing.pairingId}`;
-        if (initiatorSocket?.join) initiatorSocket.join(roomName);
-        if (targetSocket?.join) targetSocket.join(roomName);
+        if (initiatorSocket && targetSocket) {
+          initiatorSocket.data = initiatorSocket.data || {};
+          targetSocket.data = targetSocket.data || {};
+          initiatorSocket.data.partnerSocketId = targetSocket.id;
+          targetSocket.data.partnerSocketId = initiatorSocket.id;
+          initiatorSocket.data.pairingId = pairing.id || pairing.pairingId;
+          targetSocket.data.pairingId = pairing.id || pairing.pairingId;
+        }
 
-        console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId} in ${roomName}`);
+        const roomName = `room_${pairing.id || pairing.pairingId}`;
+        console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId}`);
 
         io.to(initiatorSocketId).emit('pairing_confirmed', {
           roomId: roomName,
@@ -222,11 +228,10 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return null;
       };
 
-      const roomName = `room_${payload.pairingId}`;
       const initiatorSocket = getSocket(pairing.initiatorSocketId || pairing.requesterSocketId);
       const targetSocket = getSocket(pairing.targetSocketId);
-      if (initiatorSocket?.leave) initiatorSocket.leave(roomName);
-      if (targetSocket?.leave) targetSocket.leave(roomName);
+      if (initiatorSocket?.data) initiatorSocket.data.partnerSocketId = null;
+      if (targetSocket?.data) targetSocket.data.partnerSocketId = null;
 
       for (const participant of [closed.requester, closed.target]) {
         if (participant) {
@@ -239,47 +244,53 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
       }
     });
 
-    socket.on('webrtc_signal', ({ pairingId, signal } = {}) => {
-      if (!signal) return;
+    socket.on('webrtc_signal', ({ signal, pairingId } = {}) => {
+      let partnerId = socket.data?.partnerSocketId;
 
-      const targetPairingId = pairingId;
-      const pairing = (targetPairingId ? peerManager.getPairing(targetPairingId) : null) || peerManager.getPairingForSocket(socket.id);
-      if (!pairing) {
-        console.warn(`[Signaling] No active pairing found for ID: ${targetPairingId || socket.id}`);
+      if (!partnerId) {
+        const targetPairingId = pairingId || socket.data?.pairingId;
+        const pairing = (targetPairingId ? peerManager.getPairing(targetPairingId) : null) || peerManager.getPairingForSocket(socket.id);
+        if (pairing) {
+          const initiatorId = pairing.initiatorSocketId || pairing.requesterSocketId;
+          partnerId = socket.id === initiatorId ? pairing.targetSocketId : initiatorId;
+          if (socket.data) {
+            socket.data.partnerSocketId = partnerId;
+            socket.data.pairingId = pairing.id || pairing.pairingId;
+          }
+        }
+      }
+
+      console.log(`[Signaling Server] Inbound signal '${signal?.type || 'candidate'}' from ${socket.id} -> target: ${partnerId}`);
+
+      if (!partnerId) {
+        console.warn(`[Signaling Server ⚠️] Dropped signal from ${socket.id}: No partnerSocketId bound.`);
         return;
       }
 
-      // Determine partner
-      const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
-      const recipientSocketId = socket.id === initiatorSocketId
-        ? pairing.targetSocketId
-        : initiatorSocketId;
-
-      if (recipientSocketId && recipientSocketId !== socket.id) {
-        const signalType = signal?.type || (signal?.candidate ? 'candidate' : 'signal');
-        console.log(`[Signaling] ⚡ Relaying '${signalType}' from ${socket.id} to partner ${recipientSocketId}`);
-        io.to(recipientSocketId).emit('webrtc_signal', { signal });
-      } else {
-        console.warn(`[Signaling] Blocked invalid signal or could not find partner for ${socket.id}`);
-      }
+      io.to(partnerId).emit('webrtc_signal', { signal });
+      console.log(`[Signaling Server ✅] Relayed '${signal?.type || 'candidate'}' to ${partnerId}`);
     });
 
     socket.on('signal', (payload = {}) => {
-      const pairingId = payload.pairingId;
       const signal = payload.signal !== undefined ? payload.signal : (payload.data !== undefined ? payload.data : payload);
-      if (!signal) return;
+      let partnerId = socket.data?.partnerSocketId;
 
-      const pairing = (pairingId ? peerManager.getPairing(pairingId) : null) || peerManager.getPairingForSocket(socket.id);
-      if (!pairing) return;
+      if (!partnerId) {
+        const targetPairingId = payload.pairingId || socket.data?.pairingId;
+        const pairing = (targetPairingId ? peerManager.getPairing(targetPairingId) : null) || peerManager.getPairingForSocket(socket.id);
+        if (pairing) {
+          const initiatorId = pairing.initiatorSocketId || pairing.requesterSocketId;
+          partnerId = socket.id === initiatorId ? pairing.targetSocketId : initiatorId;
+          if (socket.data) {
+            socket.data.partnerSocketId = partnerId;
+            socket.data.pairingId = pairing.id || pairing.pairingId;
+          }
+        }
+      }
 
-      const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
-      const recipientSocketId = socket.id === initiatorSocketId
-        ? pairing.targetSocketId
-        : initiatorSocketId;
-
-      if (recipientSocketId && recipientSocketId !== socket.id) {
-        io.to(recipientSocketId).emit('webrtc_signal', { signal });
-        io.to(recipientSocketId).emit('signal', { signal });
+      if (partnerId && partnerId !== socket.id) {
+        io.to(partnerId).emit('webrtc_signal', { signal });
+        io.to(partnerId).emit('signal', { signal });
       }
     });
 
