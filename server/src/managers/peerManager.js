@@ -12,6 +12,7 @@ export class PeerManager {
     const peerId = randomUUID();
     const pin = this.pinManager.issue(peerId);
     const peer = {
+      id: socketId,
       socketId,
       peerId,
       deviceName: 'Unnamed device',
@@ -22,6 +23,10 @@ export class PeerManager {
     this.peersBySocketId.set(socketId, peer);
     this.peersByPeerId.set(peerId, peer);
     return this.publicPeer(peer);
+  }
+
+  registerPeer(socketId) {
+    return this.register(socketId);
   }
 
   getBySocketId(socketId) {
@@ -106,7 +111,9 @@ export class PeerManager {
     const targetSocketId = target.socketId || target.id;
 
     if (!initiatorSocketId || !targetSocketId || initiatorSocketId === targetSocketId || (target.peerId && requester.peerId && target.peerId === requester.peerId)) {
-      throw this.#error('SELF_PAIRING', 'Cannot pair with your own device');
+      const err = new Error(`Invalid pairing: initiator (${initiatorSocketId}) and target (${targetSocketId}) must be distinct active sockets.`);
+      err.code = 'SELF_PAIRING';
+      throw err;
     }
 
     if (target.pairingId) {

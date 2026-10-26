@@ -47,12 +47,12 @@ test('rejects self-pairing in peerManager.createPairing', () => {
 
   assert.throws(
     () => manager.createPairing('socket-self', { pin: user.pin }),
-    (err) => err.code === 'SELF_PAIRING' && err.message === 'Cannot pair with your own device'
+    (err) => err.code === 'SELF_PAIRING' && (err.message === 'Cannot pair with your own device' || err.message.includes('must be distinct active sockets'))
   );
 
   assert.throws(
     () => manager.createPairing('socket-self', { peerId: user.peerId }),
-    (err) => err.code === 'SELF_PAIRING' && err.message === 'Cannot pair with your own device'
+    (err) => err.code === 'SELF_PAIRING' && (err.message === 'Cannot pair with your own device' || err.message.includes('must be distinct active sockets'))
   );
 
   manager.destroy();

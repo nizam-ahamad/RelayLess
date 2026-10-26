@@ -222,7 +222,7 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
       }
 
       if (targetSocketId === socket.id) {
-        console.warn(`[Signaling] ⚠️ Prevented self-loop signal on socket ${socket.id}`);
+        console.warn(`[Signaling] Blocked invalid signal from ${socket.id} to target ${targetSocketId}`);
         return;
       }
 

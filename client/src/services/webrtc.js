@@ -109,8 +109,8 @@ export class WebRtcSession {
       await this.peerConnection.setLocalDescription(offer);
 
       this.emitSignal({
-        type: offer.type || 'offer',
-        sdp: offer.sdp
+        type: 'offer',
+        sdp: offer
       });
     }
   }

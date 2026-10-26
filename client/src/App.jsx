@@ -6,7 +6,7 @@ import ConfirmationModal from './components/ConfirmationModal.jsx';
 import IncomingFileModal from './components/IncomingFileModal.jsx';
 import FileDropZone from './components/FileDropZone.jsx';
 import TransferProgress from './components/TransferProgress.jsx';
-import { connectSocket, disconnectSocket, emitSocket, onSocketEvent } from './services/socket.js';
+import { connectSocket, disconnectSocket, emitSocket, onSocketEvent, socket } from './services/socket.js';
 import { WebRtcSession } from './services/webrtc.js';
 import { createFileReceiver } from './services/fileReceiver.js';
 import { sendFile } from './services/fileSender.js';
@@ -326,6 +326,11 @@ export default function App() {
       const pairingId = payload.pairingId || payload.id;
       const role = payload.role || (payload.initiator ? 'initiator' : 'receiver');
       const targetSocketId = payload.partnerSocketId || (role === 'initiator' ? payload.targetSocketId : payload.initiatorSocketId) || payload.otherSocketId;
+
+      if (!targetSocketId || (socket?.id && targetSocketId === socket.id)) {
+        throw new Error(`Invalid partner socket ID: partnerSocketId cannot be self (${targetSocketId}).`);
+      }
+
       const partnerName = payload.partnerName || payload.deviceName || 'device';
 
       console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Partner Socket: ${targetSocketId}, Partner Name: ${partnerName}`);
@@ -648,7 +653,35 @@ export default function App() {
           </section>
         )}
 
-        {!isConnected && connectionState !== 'failed' && (
+        {connectionState === 'connecting' && (
+          <section className="panel connecting-card">
+            <div className="connecting-spinner">
+              <div className="spinner-orbit" />
+            </div>
+            <div className="section-kicker">Encrypted peer tunnel</div>
+            <h2>Connecting to {selectedPeer?.deviceName || selectedPeer?.partnerName || 'device'}...</h2>
+            <p className="muted">Establishing a direct, end-to-end encrypted WebRTC channel. Chunks stream peer-to-peer without server relays.</p>
+            <div className="connecting-status-pill">
+              <span className="pulse-dot" />
+              <span>Role: {webrtcRole === 'initiator' ? 'Initiator (Sending offer)' : 'Receiver (Awaiting offer)'}</span>
+            </div>
+            <button
+              className="button button-secondary"
+              type="button"
+              style={{ marginTop: '24px' }}
+              onClick={() => {
+                if (currentPairingIdRef.current) {
+                  emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
+                }
+                closeSession('Connection cancelled.');
+              }}
+            >
+              Cancel
+            </button>
+          </section>
+        )}
+
+        {!isConnected && connectionState !== 'failed' && connectionState !== 'connecting' && (
           <section className="pairing-grid">
             <article className="panel my-device-panel">
               <div className="panel-heading">

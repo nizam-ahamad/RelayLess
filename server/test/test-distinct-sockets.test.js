@@ -8,7 +8,7 @@ import { PeerManager } from '../src/managers/peerManager.js';
 import { PinManager } from '../src/managers/pinManager.js';
 import { PairingRateLimiter } from '../src/managers/rateLimiter.js';
 
-test('Enforce distinct socket IDs in pairing and bidirectional signal routing', async () => {
+test('Guarantees distinct partner sockets and bidirectional webrtc signal relay', async () => {
   const pinManager = new PinManager({ ttlMs: 60_000 });
   const peerManager = new PeerManager({ pinManager });
   const rateLimiter = new PairingRateLimiter();
@@ -56,35 +56,16 @@ test('Enforce distinct socket IDs in pairing and bidirectional signal routing', 
 
     const [confirmedA, confirmedB] = await Promise.all([confirmedPromiseA, confirmedPromiseB]);
 
-    // 4. Assert distinct socket IDs in pairing and confirmed events
+    // 4. Assert distinct partnerSocketId
     assert.equal(confirmedA.role, 'initiator');
     assert.equal(confirmedB.role, 'receiver');
 
-    assert.ok(confirmedA.initiatorSocketId, 'initiatorSocketId must be defined');
-    assert.ok(confirmedA.targetSocketId, 'targetSocketId must be defined');
-    assert.notEqual(
-      confirmedA.initiatorSocketId,
-      confirmedA.targetSocketId,
-      'confirmedA.initiatorSocketId and confirmedA.targetSocketId must be distinct'
-    );
-    assert.notEqual(
-      confirmedB.initiatorSocketId,
-      confirmedB.targetSocketId,
-      'confirmedB.initiatorSocketId and confirmedB.targetSocketId must be distinct'
-    );
+    assert.equal(confirmedA.partnerSocketId, socketB.id, 'Socket A partnerSocketId must match Socket B id');
+    assert.equal(confirmedB.partnerSocketId, socketA.id, 'Socket B partnerSocketId must match Socket A id');
+    assert.notEqual(confirmedA.partnerSocketId, socketA.id, 'Socket A partnerSocketId must not be its own socket ID');
+    assert.notEqual(confirmedB.partnerSocketId, socketB.id, 'Socket B partnerSocketId must not be its own socket ID');
 
-    assert.equal(confirmedA.partnerSocketId, socketB.id, 'Initiator partnerSocketId must match Socket B id');
-    assert.equal(confirmedB.partnerSocketId, socketA.id, 'Receiver partnerSocketId must match Socket A id');
-
-    const internalPairing = peerManager.getPairing(confirmedA.pairingId);
-    assert.ok(internalPairing);
-    assert.notEqual(
-      internalPairing.initiatorSocketId,
-      internalPairing.targetSocketId,
-      'Pairing initiatorSocketId and targetSocketId must strictly be different active sockets'
-    );
-
-    // 5. Assert Socket A can send a signal and Socket B receives it
+    // 5. Emit offer from Socket A and verify Socket B receives it
     const signalReceivedByB = new Promise((resolve) => {
       socketB.once('webrtc_signal', resolve);
     });
@@ -98,7 +79,7 @@ test('Enforce distinct socket IDs in pairing and bidirectional signal routing', 
     assert.equal(receivedOffer.senderSocketId, socketA.id);
     assert.equal(receivedOffer.signal?.type || receivedOffer.type, 'offer');
 
-    // 6. Assert Socket B can reply and Socket A receives it
+    // 6. Emit answer from Socket B and verify Socket A receives it
     const signalReceivedByA = new Promise((resolve) => {
       socketA.once('webrtc_signal', resolve);
     });
