@@ -56,7 +56,9 @@ test('Guarantees distinct partner sockets and bidirectional webrtc signal relay'
 
     const [confirmedA, confirmedB] = await Promise.all([confirmedPromiseA, confirmedPromiseB]);
 
-    // 4. Assert distinct partnerSocketId
+    // 4. Assert roomId and distinct partnerSocketId
+    assert.ok(confirmedA.roomId, 'confirmedA must contain roomId');
+    assert.equal(confirmedA.roomId, confirmedB.roomId, 'Both peers must share the same roomId');
     assert.equal(confirmedA.role, 'initiator');
     assert.equal(confirmedB.role, 'receiver');
 
@@ -65,13 +67,13 @@ test('Guarantees distinct partner sockets and bidirectional webrtc signal relay'
     assert.notEqual(confirmedA.partnerSocketId, socketA.id, 'Socket A partnerSocketId must not be its own socket ID');
     assert.notEqual(confirmedB.partnerSocketId, socketB.id, 'Socket B partnerSocketId must not be its own socket ID');
 
-    // 5. Emit offer from Socket A and verify Socket B receives it
+    // 5. Emit offer from Socket A via roomId and verify Socket B receives it
     const signalReceivedByB = new Promise((resolve) => {
       socketB.once('webrtc_signal', resolve);
     });
 
     socketA.emit('webrtc_signal', {
-      targetSocketId: confirmedA.partnerSocketId,
+      roomId: confirmedA.roomId,
       signal: { type: 'offer', sdp: 'v=0\r\no=alice 123 2 IN IP4 127.0.0.1' }
     });
 
@@ -79,13 +81,13 @@ test('Guarantees distinct partner sockets and bidirectional webrtc signal relay'
     assert.equal(receivedOffer.senderSocketId, socketA.id);
     assert.equal(receivedOffer.signal?.type || receivedOffer.type, 'offer');
 
-    // 6. Emit answer from Socket B and verify Socket A receives it
+    // 6. Emit answer from Socket B via roomId and verify Socket A receives it
     const signalReceivedByA = new Promise((resolve) => {
       socketA.once('webrtc_signal', resolve);
     });
 
     socketB.emit('webrtc_signal', {
-      targetSocketId: confirmedB.partnerSocketId,
+      roomId: confirmedB.roomId,
       signal: { type: 'answer', sdp: 'v=0\r\no=bob 456 2 IN IP4 127.0.0.1' }
     });
 

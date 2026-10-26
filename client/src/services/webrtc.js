@@ -22,12 +22,14 @@ export async function processCandidateQueue() {
 }
 
 export class WebRtcSession {
-  constructor({ role, partnerSocketId, onMessage, onStateChange, onSignal, onError }) {
+  constructor({ role, roomId, partnerSocketId, onMessage, onStateChange, onSignal, onConnected, onError }) {
     this.role = role;
+    this.roomId = roomId;
     this.partnerSocketId = partnerSocketId;
     this.onMessage = onMessage;
     this.onStateChange = onStateChange;
     this.onSignal = onSignal;
+    this.onConnected = onConnected;
     this.onError = onError;
     this.peerConnection = null;
     this.dataChannel = null;
@@ -36,31 +38,36 @@ export class WebRtcSession {
     this.closed = false;
   }
 
-  emitSignal(signal) {
+  sendSignal(signal) {
     if (!this.onSignal) return;
     this.onSignal({
+      roomId: this.roomId,
       targetSocketId: this.partnerSocketId,
       signal
     });
   }
 
+  emitSignal(signal) {
+    this.sendSignal(signal);
+  }
+
   async start() {
     activeSession = this;
-    console.log('[WebRTC] Role assigned:', this.role, 'Partner socket:', this.partnerSocketId);
+    console.log('[WebRTC] Role assigned:', this.role, 'Room:', this.roomId, 'Partner socket:', this.partnerSocketId);
     this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
 
     // Trickle ICE: emit candidates immediately the millisecond they are generated
-    this.peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('[WebRTC] Generated local ICE candidate, emitting over signaling');
-        const candidatePayload = event.candidate.toJSON
-          ? event.candidate.toJSON()
+    this.peerConnection.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        console.log('[WebRTC] 📤 Emitting candidate to room:', this.roomId);
+        const candidatePayload = candidate.toJSON
+          ? candidate.toJSON()
           : {
-              candidate: event.candidate.candidate,
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex
+              candidate: candidate.candidate,
+              sdpMid: candidate.sdpMid,
+              sdpMLineIndex: candidate.sdpMLineIndex
             };
-        this.emitSignal(candidatePayload);
+        this.sendSignal({ type: 'candidate', candidate: candidatePayload });
       }
     };
 
@@ -69,6 +76,7 @@ export class WebRtcSession {
       console.log('[WebRTC] Connection State:', state);
       if (state === 'connected') {
         if (this.dataChannel?.readyState === 'open') {
+          this.onConnected?.();
           this.onStateChange?.('data-channel-open');
         }
       } else if (['failed', 'disconnected', 'closed'].includes(state)) {
@@ -82,6 +90,7 @@ export class WebRtcSession {
       console.log('[WebRTC] ICE Connection State:', state);
       if (state === 'connected' || state === 'completed') {
         if (this.dataChannel?.readyState === 'open') {
+          this.onConnected?.();
           this.onStateChange?.('data-channel-open');
         }
       } else if (['failed', 'disconnected'].includes(state)) {
@@ -90,13 +99,13 @@ export class WebRtcSession {
       }
     };
 
-    // Receiver side: attach incoming DataChannel
-    this.peerConnection.ondatachannel = (event) => {
+    // Receiver Flow (role === 'receiver'):
+    this.peerConnection.ondatachannel = (e) => {
       console.log('[WebRTC] ondatachannel received on receiver!');
-      this.setupDataChannel(event.channel);
+      this.setupDataChannel(e.channel);
     };
 
-    // Initiator side: create DataChannel FIRST so it is included in the SDP offer
+    // Initiator Flow (role === 'initiator'):
     if (this.role === 'initiator') {
       console.log('[WebRTC] Creating DataChannel before creating offer...');
       const channel = this.peerConnection.createDataChannel('fileTransfer', {
@@ -104,11 +113,11 @@ export class WebRtcSession {
       });
       this.setupDataChannel(channel);
 
-      console.log('[WebRTC] Creating & sending offer...');
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
 
-      this.emitSignal({
+      console.log('[WebRTC] 📤 Emitting offer to room:', this.roomId);
+      this.sendSignal({
         type: 'offer',
         sdp: offer
       });
@@ -123,6 +132,7 @@ export class WebRtcSession {
 
     const onConnected = () => {
       console.log('[WebRTC] ⚡ DataChannel OPENED!');
+      this.onConnected?.();
       this.onStateChange?.('data-channel-open');
     };
 
@@ -192,48 +202,54 @@ export class WebRtcSession {
     let signalPayload;
 
     if (typeof type === 'object' && type !== null && data === undefined) {
-      signalPayload = type;
-      signalType = type.type || (type.candidate ? 'ice-candidate' : 'signal');
+      signalPayload = type?.signal !== undefined ? type.signal : (type?.data !== undefined ? type.data : type);
+      signalType = type.type || signalPayload?.type || (signalPayload?.candidate ? 'candidate' : 'signal');
     } else {
-      signalPayload = data !== undefined ? data : type;
-      signalType = (typeof type === 'string' ? type : null) || signalPayload?.type || (signalPayload?.candidate ? 'ice-candidate' : 'signal');
+      signalPayload = data !== undefined ? (data?.signal !== undefined ? data.signal : data) : type;
+      signalType = (typeof type === 'string' ? type : null) || signalPayload?.type || (signalPayload?.candidate ? 'candidate' : 'signal');
+    }
+
+    if (!signalType && signalPayload?.candidate) {
+      signalType = 'candidate';
     }
 
     if (signalType === 'offer') {
-      console.log('[WebRTC] Received offer, creating & sending answer...');
-      const sessionDesc = signalPayload?.sdp?.type
-        ? signalPayload.sdp
-        : (typeof signalPayload?.sdp === 'string'
-            ? { type: 'offer', sdp: signalPayload.sdp }
-            : (signalPayload?.type ? signalPayload : { type: 'offer', sdp: signalPayload }));
+      console.log('[WebRTC] 📥 Received offer! Creating answer...');
+      const sdpData = signalPayload?.sdp || signalPayload?.signal?.sdp || signalPayload;
+      const sessionDesc = sdpData?.type
+        ? sdpData
+        : (typeof sdpData === 'string'
+            ? { type: 'offer', sdp: sdpData }
+            : (signalPayload?.type ? signalPayload : { type: 'offer', sdp: sdpData }));
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
       await this.processCandidateQueue();
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
-      this.emitSignal({
+
+      console.log('[WebRTC] 📤 Emitting answer to room:', this.roomId);
+      this.sendSignal({
         type: 'answer',
-        sdp: answer.sdp || answer
+        sdp: answer
       });
       return;
     }
 
     if (signalType === 'answer') {
-      console.log('[WebRTC] Received answer, setting remote description...');
-      const sessionDesc = signalPayload?.sdp?.type
-        ? signalPayload.sdp
-        : (typeof signalPayload?.sdp === 'string'
-            ? { type: 'answer', sdp: signalPayload.sdp }
-            : (signalPayload?.type ? signalPayload : { type: 'answer', sdp: signalPayload }));
+      console.log('[WebRTC] 📥 Received answer! Setting remote description...');
+      const sdpData = signalPayload?.sdp || signalPayload?.signal?.sdp || signalPayload;
+      const sessionDesc = sdpData?.type
+        ? sdpData
+        : (typeof sdpData === 'string'
+            ? { type: 'answer', sdp: sdpData }
+            : (signalPayload?.type ? signalPayload : { type: 'answer', sdp: sdpData }));
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
       await this.processCandidateQueue();
       return;
     }
 
-    if (signalType === 'ice-candidate' || signalType === 'candidate' || signalPayload?.candidate) {
+    if (signalType === 'candidate' || signalType === 'ice-candidate' || signalPayload?.candidate) {
       console.log('[WebRTC] Received remote ICE candidate from signaling');
-      const candidate = signalPayload?.candidate !== undefined && typeof signalPayload.candidate === 'object'
-        ? signalPayload.candidate
-        : signalPayload;
+      const candidate = signalPayload?.candidate !== undefined ? signalPayload.candidate : signalPayload;
       await this.handleRemoteCandidate(candidate);
     }
   }
@@ -273,4 +289,10 @@ export class WebRtcSession {
       activeSession = null;
     }
   }
+}
+
+export async function startSession(config) {
+  const session = new WebRtcSession(config);
+  await session.start();
+  return session;
 }

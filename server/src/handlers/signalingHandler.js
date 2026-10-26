@@ -141,36 +141,56 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
         const targetSocketId = pairing.targetSocketId;
 
-        console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId}`);
+        const getSocket = (socketId) => {
+          if (!socketId) return null;
+          if (io.sockets?.sockets?.get) {
+            return io.sockets.sockets.get(socketId);
+          }
+          if (io.sockets?.get) {
+            return io.sockets.get(socketId);
+          }
+          return null;
+        };
+
+        const initiatorSocket = getSocket(initiatorSocketId);
+        const targetSocket = getSocket(targetSocketId);
+
+        const roomName = `room_${pairing.id || pairing.pairingId}`;
+        if (initiatorSocket?.join) initiatorSocket.join(roomName);
+        if (targetSocket?.join) targetSocket.join(roomName);
+
+        console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId} in ${roomName}`);
 
         io.to(initiatorSocketId).emit('pairing_confirmed', {
+          roomId: roomName,
           pairingId: pairing.id || pairing.pairingId,
           id: pairing.id || pairing.pairingId,
           role: 'initiator',
           initiator: true,
-          initiatorSocketId,
-          targetSocketId,
           partnerSocketId: targetSocketId,
           partnerName: target.deviceName || pairing.targetDeviceName,
           deviceName: target.deviceName || pairing.targetDeviceName,
           peerId: target.peerId,
           confirmationCode: pairing.confirmationCode,
-          confirmationState: result.confirmationState
+          confirmationState: result.confirmationState,
+          initiatorSocketId,
+          targetSocketId
         });
 
         io.to(targetSocketId).emit('pairing_confirmed', {
+          roomId: roomName,
           pairingId: pairing.id || pairing.pairingId,
           id: pairing.id || pairing.pairingId,
           role: 'receiver',
           initiator: false,
-          initiatorSocketId,
-          targetSocketId,
           partnerSocketId: initiatorSocketId,
           partnerName: requester.deviceName || pairing.initiatorDeviceName,
           deviceName: requester.deviceName || pairing.initiatorDeviceName,
           peerId: requester.peerId,
           confirmationCode: pairing.confirmationCode,
-          confirmationState: result.confirmationState
+          confirmationState: result.confirmationState,
+          initiatorSocketId,
+          targetSocketId
         });
       } catch (error) {
         socket.emit('pairing_error', {
@@ -191,6 +211,23 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return;
       }
 
+      const getSocket = (socketId) => {
+        if (!socketId) return null;
+        if (io.sockets?.sockets?.get) {
+          return io.sockets.sockets.get(socketId);
+        }
+        if (io.sockets?.get) {
+          return io.sockets.get(socketId);
+        }
+        return null;
+      };
+
+      const roomName = `room_${payload.pairingId}`;
+      const initiatorSocket = getSocket(pairing.initiatorSocketId || pairing.requesterSocketId);
+      const targetSocket = getSocket(pairing.targetSocketId);
+      if (initiatorSocket?.leave) initiatorSocket.leave(roomName);
+      if (targetSocket?.leave) targetSocket.leave(roomName);
+
       for (const participant of [closed.requester, closed.target]) {
         if (participant) {
           io.to(participant.socketId).emit('pairing_cancelled', {
@@ -203,9 +240,36 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
     });
 
     const handleSignalRelay = (payload = {}) => {
-      let targetSocketId = payload.targetSocketId || payload.otherSocketId;
+      let roomId = payload.roomId;
       const pairing = peerManager.getPairingForSocket(socket.id);
+      if (!roomId && pairing) {
+        roomId = `room_${pairing.id || pairing.pairingId}`;
+      }
 
+      const signal = payload.signal !== undefined ? payload.signal : (payload.data !== undefined ? payload.data : payload);
+      const signalType = payload.type || signal?.type || (signal?.candidate ? 'candidate' : 'signal');
+
+      if (roomId) {
+        console.log(`[Signaling] ⚡ Broadcasting '${signalType}' from ${socket.id} to room ${roomId}`);
+        const envelope = {
+          roomId,
+          pairingId: pairing?.pairingId || payload.pairingId || pairing?.id,
+          senderSocketId: socket.id,
+          type: signalType,
+          data: signal,
+          signal
+        };
+        if (typeof socket.to === 'function') {
+          socket.to(roomId).emit('webrtc_signal', envelope);
+          socket.to(roomId).emit('signal', envelope);
+        } else if (typeof io.to === 'function') {
+          io.to(roomId).emit('webrtc_signal', envelope);
+          io.to(roomId).emit('signal', envelope);
+        }
+        return;
+      }
+
+      let targetSocketId = payload.targetSocketId || payload.otherSocketId;
       if (!targetSocketId && pairing) {
         const initiatorId = pairing.initiatorSocketId || pairing.requesterSocketId;
         targetSocketId = initiatorId === socket.id
@@ -226,8 +290,6 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         return;
       }
 
-      const signal = payload.signal !== undefined ? payload.signal : (payload.data !== undefined ? payload.data : payload);
-      const signalType = payload.type || signal?.type || (signal?.candidate ? 'candidate' : 'signal');
       console.log(`[Signaling] ⚡ Relaying '${signalType}' from ${socket.id} to ${targetSocketId}`);
 
       const envelope = {

@@ -30,11 +30,13 @@ export default function App() {
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [partnerSocketId, setPartnerSocketId] = useState(null);
   const [webrtcRole, setWebrtcRole] = useState(null);
+  const [roomId, setRoomId] = useState(null);
   const sessionRef = useRef(null);
   const transferAbortRef = useRef(null);
   const receiverRef = useRef(null);
   const incomingTransferRef = useRef(null);
   const currentPairingIdRef = useRef(null);
+  const roomIdRef = useRef(null);
   const connectionTimeoutRef = useRef(null);
   const pendingSignalsRef = useRef([]);
   const partnerSocketIdRef = useRef(null);
@@ -68,8 +70,10 @@ export default function App() {
     pendingFilesRef.current = null;
     partnerSocketIdRef.current = null;
     webrtcRoleRef.current = null;
+    roomIdRef.current = null;
     setPartnerSocketId(null);
     setWebrtcRole(null);
+    setRoomId(null);
     incomingTransferRef.current?.resolve(null);
     incomingTransferRef.current = null;
     sessionRef.current?.close();
@@ -155,20 +159,23 @@ export default function App() {
   }, []);
 
   const sendSignal = useCallback((payload, maybeData) => {
+    let roomId = roomIdRef.current;
     let targetSocketId = partnerSocketIdRef.current;
     let signal = payload;
 
     if (payload && typeof payload === 'object' && payload.signal !== undefined) {
+      roomId = payload.roomId || roomId;
       targetSocketId = payload.targetSocketId || targetSocketId;
       signal = payload.signal;
     } else if (maybeData !== undefined) {
       signal = maybeData;
     }
 
-    const signalType = signal?.type || (signal?.candidate ? 'ice-candidate' : 'signal');
-    console.log(`[WebRTC] Emitting webrtc_signal to ${targetSocketId}:`, signalType);
+    const signalType = signal?.type || (signal?.candidate ? 'candidate' : 'signal');
+    console.log(`[WebRTC] Emitting webrtc_signal to room ${roomId || targetSocketId}:`, signalType);
 
     const envelope = {
+      roomId,
       targetSocketId,
       pairingId: currentPairingIdRef.current,
       type: signalType,
@@ -255,14 +262,32 @@ export default function App() {
     }
   }, [showNotice]);
 
-  const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId }) => {
+  const startWebRtc = useCallback(async ({ role, roomId, pairingId, partnerSocketId }) => {
     sessionRef.current?.close();
-    console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Partner: ${partnerSocketId}`);
+    console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Room: ${roomId}, Partner: ${partnerSocketId}`);
     const session = new WebRtcSession({
       role,
+      roomId: roomId || roomIdRef.current,
       partnerSocketId: partnerSocketId || partnerSocketIdRef.current,
       onMessage: handleChannelMessage,
       onSignal: sendSignal,
+      onConnected: () => {
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting connectionState = connected.');
+        setConnectionState('connected');
+        emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
+        showNotice('success', `Direct encrypted bridge established with ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'device'}.`);
+
+        if (pendingFilesRef.current) {
+          const queuedFiles = pendingFilesRef.current;
+          pendingFilesRef.current = null;
+          console.log('[WebRTC] Data channel ready, auto-starting queued file transfer...');
+          handleFilesRef.current?.(queuedFiles);
+        }
+      },
       onStateChange: (state) => {
         console.log(`[WebRTC] onStateChange: ${state}`);
         if (state === 'data-channel-open') {
@@ -324,18 +349,17 @@ export default function App() {
     console.log('[Signaling] ⚡ Received pairing_confirmed event:', payload);
     try {
       const pairingId = payload.pairingId || payload.id;
+      const roomId = payload.roomId || (pairingId ? `room_${pairingId}` : null);
       const role = payload.role || (payload.initiator ? 'initiator' : 'receiver');
       const targetSocketId = payload.partnerSocketId || (role === 'initiator' ? payload.targetSocketId : payload.initiatorSocketId) || payload.otherSocketId;
 
-      if (!targetSocketId || (socket?.id && targetSocketId === socket.id)) {
-        throw new Error(`Invalid partner socket ID: partnerSocketId cannot be self (${targetSocketId}).`);
-      }
-
       const partnerName = payload.partnerName || payload.deviceName || 'device';
 
-      console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Partner Socket: ${targetSocketId}, Partner Name: ${partnerName}`);
+      console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Room: ${roomId}, Partner: ${partnerName}`);
 
       currentPairingIdRef.current = pairingId;
+      roomIdRef.current = roomId;
+      setRoomId(roomId);
       partnerSocketIdRef.current = targetSocketId;
       setPartnerSocketId(targetSocketId);
       webrtcRoleRef.current = role;
@@ -346,6 +370,7 @@ export default function App() {
       setSelectedPeer({
         ...payload,
         pairingId,
+        roomId,
         targetSocketId,
         partnerSocketId: targetSocketId,
         role,
@@ -355,7 +380,7 @@ export default function App() {
 
       // Synchronize: set connecting (NOT connected) until dataChannel.onopen fires
       setConnectionState('connecting');
-      showNotice('info', 'Connecting to device...');
+      showNotice('info', `Connecting to ${partnerName}...`);
 
       if (connectionTimeoutRef.current) {
         clearTimeout(connectionTimeoutRef.current);
@@ -370,6 +395,7 @@ export default function App() {
 
       await startWebRtc({
         role,
+        roomId,
         pairingId,
         partnerSocketId: targetSocketId
       });
@@ -660,7 +686,7 @@ export default function App() {
             </div>
             <div className="section-kicker">Encrypted peer tunnel</div>
             <h2>Connecting to {selectedPeer?.deviceName || selectedPeer?.partnerName || 'device'}...</h2>
-            <p className="muted">Establishing a direct, end-to-end encrypted WebRTC channel. Chunks stream peer-to-peer without server relays.</p>
+            <p className="muted">Negotiating direct bridge. Encrypted peer-to-peer data channel will stream directly between devices without relay servers.</p>
             <div className="connecting-status-pill">
               <span className="pulse-dot" />
               <span>Role: {webrtcRole === 'initiator' ? 'Initiator (Sending offer)' : 'Receiver (Awaiting offer)'}</span>
