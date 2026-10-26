@@ -286,14 +286,16 @@ export default function App() {
         } else if (state === 'data-channel-closed') {
           console.log('[WebRTC] DataChannel closed');
           setConnectionState((current) => current === 'connected' ? 'ready' : current);
-        } else if (state === 'failed' || state === 'disconnected') {
+        } else if (state === 'failed') {
           if (connectionTimeoutRef.current) {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
-          console.warn(`[WebRTC] Connection ${state}`);
+          console.warn('[WebRTC] Connection failed');
           setConnectionState('failed');
           showNotice('error', 'WebRTC connection dropped. Could not traverse network firewalls.');
+        } else if (state === 'disconnected') {
+          console.log('[WebRTC] Connection state is disconnected (transient, waiting to re-establish)');
         }
       },
       onError: (error) => {

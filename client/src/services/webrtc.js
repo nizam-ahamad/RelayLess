@@ -2,16 +2,8 @@ export function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' }
   ];
 }
 
@@ -46,6 +38,7 @@ export class WebRtcSession {
     this.candidateQueue = [];
     this.messageQueue = Promise.resolve();
     this.closed = false;
+    this.iceFailureTimer = null;
   }
 
   sendSignal(signal) {
@@ -83,13 +76,23 @@ export class WebRtcSession {
       const state = this.peerConnection?.connectionState;
       console.log('[WebRTC] Connection State:', state);
       if (state === 'connected') {
+        if (this.iceFailureTimer) {
+          clearTimeout(this.iceFailureTimer);
+          this.iceFailureTimer = null;
+        }
+        this.onConnected?.();
+        this.onStateChange?.('connected');
         if (this.dataChannel?.readyState === 'open') {
-          this.onConnected?.();
           this.onStateChange?.('data-channel-open');
         }
-      } else if (['failed', 'disconnected', 'closed'].includes(state)) {
-        this.onStateChange?.(state);
-        this.onError?.(new Error(`WebRTC connection ${state}.`));
+      } else if (state === 'disconnected') {
+        // DO NOTHING. Transient state during candidate checking/network shift.
+        console.log('[WebRTC] Connection State: disconnected (transient, ignoring)');
+      } else if (state === 'failed') {
+        this.onStateChange?.('failed');
+        this.onError?.(new Error('WebRTC connection failed.'));
+      } else if (state === 'closed') {
+        this.onStateChange?.('closed');
       }
     };
 
@@ -97,13 +100,29 @@ export class WebRtcSession {
       const state = this.peerConnection?.iceConnectionState;
       console.log('[WebRTC] ICE Connection State:', state);
       if (state === 'connected' || state === 'completed') {
+        if (this.iceFailureTimer) {
+          clearTimeout(this.iceFailureTimer);
+          this.iceFailureTimer = null;
+        }
         if (this.dataChannel?.readyState === 'open') {
           this.onConnected?.();
           this.onStateChange?.('data-channel-open');
         }
-      } else if (['failed', 'disconnected'].includes(state)) {
-        this.onStateChange?.(state);
-        this.onError?.(new Error(`WebRTC ICE connection ${state}.`));
+      } else if (state === 'disconnected') {
+        // DO NOTHING. Transient state during candidate checking. Let it continue negotiating.
+        console.log('[WebRTC] ICE Connection State: disconnected (transient, ignoring)');
+      } else if (state === 'failed') {
+        if (!this.iceFailureTimer) {
+          console.warn('[WebRTC] ICE connection state failed - waiting 5s grace period before failing...');
+          this.iceFailureTimer = setTimeout(() => {
+            const currentState = this.peerConnection?.iceConnectionState;
+            if (currentState === 'failed') {
+              console.error('[WebRTC] ICE connection failed permanently after 5s grace period');
+              this.onStateChange?.('failed');
+              this.onError?.(new Error('WebRTC ICE connection failed.'));
+            }
+          }, 5000);
+        }
       }
     };
 
@@ -282,6 +301,10 @@ export class WebRtcSession {
 
   close() {
     this.closed = true;
+    if (this.iceFailureTimer) {
+      clearTimeout(this.iceFailureTimer);
+      this.iceFailureTimer = null;
+    }
     this.candidateQueue = [];
     this.messageQueue = Promise.resolve();
     if (this.dataChannel) {
