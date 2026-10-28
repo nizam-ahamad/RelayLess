@@ -1,9 +1,8 @@
 import cors from 'cors';
 import express from 'express';
-import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Server as SocketIOServer } from 'socket.io';
 import { registerSignalingHandlers } from './handlers/signalingHandler.js';
 import { PeerManager } from './managers/peerManager.js';
@@ -11,9 +10,11 @@ import { PinManager } from './managers/pinManager.js';
 
 import { PairingRateLimiter } from './managers/rateLimiter.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = join(__dirname, '..', '..');
-const clientDist = join(projectRoot, 'client', 'dist');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Resolve client/dist from server/src/ -> goes up two directories to project root
+const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const port = Number(process.env.PORT ?? 3001);
 const pinTtlMs = Number(process.env.PIN_TTL_MS ?? 120_000);
 const isProduction = process.env.NODE_ENV === 'production';
@@ -150,16 +151,21 @@ app.get('/api/webrtc-config', async (_req, res) => {
   });
 });
 
-if (existsSync(clientDist)) {
-  app.use(express.static(clientDist, { index: 'index.html' }));
-  app.get('*', (request, response, next) => {
-    if (request.path.startsWith('/socket.io')) {
-      next();
-      return;
-    }
-    response.sendFile(join(clientDist, 'index.html'));
-  });
-}
+// 1. Serve static assets with correct MIME types
+app.use(express.static(clientDistPath));
+
+// 2. Explicitly guard /assets to prevent returning index.html on missing files
+app.use('/assets', (req, res) => {
+  res.status(404).type('text/plain').send('Asset not found');
+});
+
+// 3. SPA wildcard catch-all for React client routing (placed AFTER api and static routes)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  res.sendFile(path.join(clientDistPath, 'index.html'));
+});
 
 registerSignalingHandlers(io, peerManager, rateLimiter);
 

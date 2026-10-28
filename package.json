@@ -9,8 +9,8 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,green \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
-    "build": "npm run build --workspace client",
-    "start": "npm run start --workspace server",
+    "build": "npm --prefix client install && npm --prefix client run build",
+    "start": "node server/src/server.js",
     "test": "npm run test --workspace server"
   },
   "devDependencies": {
