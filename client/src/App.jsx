@@ -35,6 +35,7 @@ export default function App() {
   const [pairingId, setPairingId] = useState(null);
   const [verificationCode, setVerificationCode] = useState(null);
   const [webrtcRole, setWebrtcRole] = useState(null);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [step, setStep] = useState('idle');
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -148,6 +149,7 @@ export default function App() {
     setFiles([]);
     setTransferProgress(0);
     setIncomingTransfer(null);
+    setShowConfirmationModal(false);
     setPrompt(null);
     setVerificationCode(null);
     setWebrtcRole(null);
@@ -501,9 +503,10 @@ export default function App() {
       webrtcRoleRef.current = role;
       setWebrtcRole(role);
 
+      setShowConfirmationModal(false);
       setPrompt(null);
       setVerificationCode(null);
-      setStep('connected');
+      setStep('transfer');
       setWaitingForAcceptance(false);
       setSelectedPeer({
         ...payload,
@@ -590,40 +593,53 @@ export default function App() {
         setPeer((current) => ({ ...(current || {}), ...nextPin }));
         setPinSeconds(nextPin.expiresIn ?? 120);
       }),
-      onSocketEvent('session_matched', ({ verificationCode: vCode, confirmationCode: cCode, role, ...payload } = {}) => {
-        const code = vCode ?? cCode;
-        const pId = payload.pairingId || payload.id;
+      onSocketEvent('session_matched', (data = {}) => {
+        const rawCode = data.verificationCode || data.code || data.confirmationCode;
+        const code = rawCode ? String(rawCode).padStart(2, '0') : '--';
+        console.log('[Socket 🔑] Received verification code:', code);
+        const pId = data.pairingId || data.id;
         currentPairingIdRef.current = pId;
         setPairingId(pId);
         setVerificationCode(code);
-        if (role) {
-          setWebrtcRole(role);
-          webrtcRoleRef.current = role;
+        if (data.role) {
+          setWebrtcRole(data.role);
+          webrtcRoleRef.current = data.role;
         }
         setStep('verify');
-        setPrompt({ ...payload, pairingId: pId, role, verificationCode: code, confirmationCode: code });
+        setPrompt({ ...data, pairingId: pId, role: data.role, verificationCode: code, code });
+        setShowConfirmationModal(true);
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
       onSocketEvent('start_transfer_session', (payload) => handlePairingConfirmedRef.current(payload)),
-      onSocketEvent('paired', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
-        const code = vCode ?? cCode;
-        const pId = payload.pairingId || payload.id;
+      onSocketEvent('paired', (data = {}) => {
+        const rawCode = data.verificationCode || data.code || data.confirmationCode;
+        const code = rawCode ? String(rawCode).padStart(2, '0') : '--';
+        const pId = data.pairingId || data.id;
         currentPairingIdRef.current = pId;
         setPairingId(pId);
         setVerificationCode(code);
         setStep('verify');
-        setPrompt({ ...payload, pairingId: pId, verificationCode: code, confirmationCode: code });
+        setPrompt({ ...data, pairingId: pId, verificationCode: code, code });
+        setShowConfirmationModal(true);
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
       onSocketEvent('pairing_prompt', (nextPrompt) => {
-        currentPairingIdRef.current = nextPrompt.pairingId;
+        const pId = nextPrompt.pairingId || nextPrompt.id;
+        currentPairingIdRef.current = pId;
         setPairingId(nextPrompt.pairingId);
-        const code = nextPrompt.verificationCode ?? nextPrompt.confirmationCode;
+        const rawCode = nextPrompt.verificationCode ?? nextPrompt.confirmationCode ?? nextPrompt.code;
+        const code = rawCode ? String(rawCode).padStart(2, '0') : '--';
         setVerificationCode(code);
+        if (nextPrompt.role) {
+          const role = nextPrompt.role === 'target' ? 'initiator' : (nextPrompt.role === 'requester' ? 'receiver' : nextPrompt.role);
+          setWebrtcRole(role);
+          webrtcRoleRef.current = role;
+        }
         setStep('verify');
-        setPrompt(nextPrompt);
+        setPrompt({ ...nextPrompt, pairingId: pId, verificationCode: code, code });
+        setShowConfirmationModal(true);
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
@@ -696,6 +712,7 @@ export default function App() {
         return;
       }
       setPinError(false);
+      emitSocket('join_session', { pin: normalized, deviceName });
       emitSocket('request_pairing', {
         pin: normalized,
         deviceName
@@ -710,6 +727,7 @@ export default function App() {
         showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
         return;
       }
+      emitSocket('join_session', { targetPeerId: scannedTargetPeerId, deviceName });
       emitSocket('request_pairing', {
         targetPeerId: scannedTargetPeerId,
         deviceName
@@ -738,22 +756,29 @@ export default function App() {
   }, [handleJoinWithPin]);
 
   const respondToPrompt = (accepted) => {
-    if (!prompt) {
+    const activePairingId = prompt?.pairingId || pairingId || currentPairingIdRef.current;
+    if (!activePairingId) {
       return;
     }
-    emitSocket('pairing_response', {
-      pairingId: prompt.pairingId,
-      accepted
-    });
-    if (!accepted) {
+    if (accepted) {
+      emitSocket('confirm_pairing', { pairingId: activePairingId });
+      emitSocket('pairing_response', {
+        pairingId: activePairingId,
+        accepted: true
+      });
+      setWaitingForAcceptance(true);
+    } else {
+      emitSocket('pairing_response', {
+        pairingId: activePairingId,
+        accepted: false
+      });
+      setShowConfirmationModal(false);
       currentPairingIdRef.current = null;
       setPairingId(null);
       setPrompt(null);
       setVerificationCode(null);
       setStep('idle');
       setConnectionState('ready');
-    } else {
-      setWaitingForAcceptance(true);
     }
   };
 
@@ -1078,11 +1103,16 @@ export default function App() {
       </main>
 
       <ConfirmationModal
+        isOpen={showConfirmationModal && Boolean(prompt || verificationCode)}
         prompt={prompt}
+        code={verificationCode}
         verificationCode={verificationCode}
+        rawCode={verificationCode}
         displayCode={displayCode}
         hasAccepted={waitingForAcceptance}
+        onConfirm={() => respondToPrompt(true)}
         onAccept={() => respondToPrompt(true)}
+        onClose={() => respondToPrompt(false)}
         onReject={() => respondToPrompt(false)}
       />
       <IncomingFileModal

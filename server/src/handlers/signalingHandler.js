@@ -18,9 +18,11 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
       peerManager.setDeviceName(socket.id, payload.deviceName);
     });
 
-    socket.on('request_pairing', (payload = {}, acknowledgement) => {
+    const handlePairingRequest = (payload = {}, acknowledgement) => {
       const { targetPeerId, pin, deviceName } = payload;
-      peerManager.setDeviceName(socket.id, deviceName);
+      if (deviceName) {
+        peerManager.setDeviceName(socket.id, deviceName);
+      }
 
       const clientIp = socket.handshake?.address || socket.conn?.remoteAddress;
       const rateLimitKeys = [socket.id, clientIp].filter(Boolean);
@@ -69,28 +71,49 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         const participants = peerManager.getPairingPeers(pairing.pairingId);
         const requesterPeer = participants.requester;
         const targetPeerObj = participants.target;
+        const formattedCode = String(pairing.confirmationCode ?? pairing.verificationCode ?? '00').padStart(2, '0');
+        const pId = pairing.pairingId || pairing.id;
+
+        const sessionPayload = {
+          pairingId: pId,
+          id: pId,
+          verificationCode: formattedCode,
+          confirmationCode: formattedCode,
+          code: formattedCode
+        };
+
+        console.log(`[Signaling 🔑] Session matched ${pId} with verification code: ${formattedCode}`);
+
+        // Notify host (targetPeerObj is host)
+        io.to(targetPeerObj.socketId).emit('session_matched', {
+          ...sessionPayload,
+          role: 'initiator',
+          otherDeviceName: requesterPeer.deviceName
+        });
+
+        // Notify joiner (requesterPeer is joiner / socket)
+        socket.emit('session_matched', {
+          ...sessionPayload,
+          role: 'receiver',
+          otherDeviceName: targetPeerObj.deviceName
+        });
+        if (requesterPeer.socketId !== socket.id) {
+          io.to(requesterPeer.socketId).emit('session_matched', {
+            ...sessionPayload,
+            role: 'receiver',
+            otherDeviceName: targetPeerObj.deviceName
+          });
+        }
+
         const prompt = {
-          pairingId: pairing.pairingId,
-          confirmationCode: pairing.confirmationCode,
+          pairingId: pId,
+          confirmationCode: formattedCode,
+          verificationCode: formattedCode,
+          code: formattedCode,
           expiresIn: 120,
           requester: pairingParticipant(requesterPeer, targetPeerObj),
           target: pairingParticipant(targetPeerObj, requesterPeer)
         };
-
-        io.to(targetPeerObj.socketId).emit('session_matched', {
-          pairingId: pairing.pairingId,
-          role: 'initiator',
-          verificationCode: pairing.confirmationCode,
-          confirmationCode: pairing.confirmationCode,
-          otherDeviceName: requesterPeer.deviceName
-        });
-        io.to(requesterPeer.socketId).emit('session_matched', {
-          pairingId: pairing.pairingId,
-          role: 'receiver',
-          verificationCode: pairing.confirmationCode,
-          confirmationCode: pairing.confirmationCode,
-          otherDeviceName: targetPeerObj.deviceName
-        });
 
         io.to(requesterPeer.socketId).emit('pairing_prompt', {
           ...prompt,
@@ -102,7 +125,7 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           role: 'target',
           otherDeviceName: requesterPeer.deviceName
         });
-        acknowledgement?.({ ok: true, pairingId: pairing.pairingId });
+        acknowledgement?.({ ok: true, pairingId: pId, code: formattedCode, verificationCode: formattedCode });
       } catch (error) {
         rateLimiter.recordFailure(...rateLimitKeys);
         const response = {
@@ -112,9 +135,12 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         socket.emit('pairing_error', response);
         acknowledgement?.({ ok: false, ...response });
       }
-    });
+    };
 
-    socket.on('pairing_response', (payload = {}) => {
+    socket.on('request_pairing', handlePairingRequest);
+    socket.on('join_session', handlePairingRequest);
+
+    const handlePairingResponse = (payload = {}) => {
       try {
         const result = peerManager.respondToPairing(
           payload.pairingId,
@@ -179,71 +205,68 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           targetSocket.data.pairingId = pairing.id || pairing.pairingId;
         }
 
-        const roomName = `room_${pairing.id || pairing.pairingId}`;
+        const pId = pairing.id || pairing.pairingId;
+        const roomName = `room_${pId}`;
+        const formattedCode = String(pairing.confirmationCode ?? pairing.verificationCode ?? '00').padStart(2, '0');
         console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId}`);
 
-        io.to(initiatorSocketId).emit('start_transfer_session', {
+        const transferPayloadHost = {
           roomId: roomName,
-          pairingId: pairing.id || pairing.pairingId,
-          id: pairing.id || pairing.pairingId,
+          pairingId: pId,
+          id: pId,
           role: 'initiator',
           initiator: true,
+          initiatorId: initiatorSocketId,
+          hostSocketId: initiatorSocketId,
           partnerSocketId: targetSocketId,
           partnerName: target.deviceName || pairing.targetDeviceName,
           deviceName: target.deviceName || pairing.targetDeviceName,
           peerId: target.peerId,
-          confirmationCode: pairing.confirmationCode,
-          verificationCode: pairing.confirmationCode,
+          confirmationCode: formattedCode,
+          verificationCode: formattedCode,
+          code: formattedCode,
           initiatorSocketId,
           targetSocketId
-        });
+        };
 
-        io.to(targetSocketId).emit('start_transfer_session', {
+        const transferPayloadJoiner = {
           roomId: roomName,
-          pairingId: pairing.id || pairing.pairingId,
-          id: pairing.id || pairing.pairingId,
+          pairingId: pId,
+          id: pId,
           role: 'receiver',
           initiator: false,
+          initiatorId: initiatorSocketId,
+          hostSocketId: initiatorSocketId,
           partnerSocketId: initiatorSocketId,
           partnerName: requester.deviceName || pairing.initiatorDeviceName,
           deviceName: requester.deviceName || pairing.initiatorDeviceName,
           peerId: requester.peerId,
-          confirmationCode: pairing.confirmationCode,
-          verificationCode: pairing.confirmationCode,
+          confirmationCode: formattedCode,
+          verificationCode: formattedCode,
+          code: formattedCode,
           initiatorSocketId,
           targetSocketId
+        };
+
+        // Emit start_transfer_session to both sockets
+        io.to(initiatorSocketId).emit('start_transfer_session', transferPayloadHost);
+        io.to(targetSocketId).emit('start_transfer_session', transferPayloadJoiner);
+
+        // Also broadcast start_transfer_session to session room/id
+        io.to(pId).emit('start_transfer_session', {
+          pairingId: pId,
+          initiatorId: initiatorSocketId
         });
 
+        // Also emit pairing_confirmed for backwards compatibility
         io.to(initiatorSocketId).emit('pairing_confirmed', {
-          roomId: roomName,
-          pairingId: pairing.id || pairing.pairingId,
-          id: pairing.id || pairing.pairingId,
-          role: 'initiator',
-          initiator: true,
-          partnerSocketId: targetSocketId,
-          partnerName: target.deviceName || pairing.targetDeviceName,
-          deviceName: target.deviceName || pairing.targetDeviceName,
-          peerId: target.peerId,
-          confirmationCode: pairing.confirmationCode,
-          confirmationState: result.confirmationState,
-          initiatorSocketId,
-          targetSocketId
+          ...transferPayloadHost,
+          confirmationState: result.confirmationState
         });
 
         io.to(targetSocketId).emit('pairing_confirmed', {
-          roomId: roomName,
-          pairingId: pairing.id || pairing.pairingId,
-          id: pairing.id || pairing.pairingId,
-          role: 'receiver',
-          initiator: false,
-          partnerSocketId: initiatorSocketId,
-          partnerName: requester.deviceName || pairing.initiatorDeviceName,
-          deviceName: requester.deviceName || pairing.initiatorDeviceName,
-          peerId: requester.peerId,
-          confirmationCode: pairing.confirmationCode,
-          confirmationState: result.confirmationState,
-          initiatorSocketId,
-          targetSocketId
+          ...transferPayloadJoiner,
+          confirmationState: result.confirmationState
         });
       } catch (error) {
         socket.emit('pairing_error', {
@@ -251,6 +274,11 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           message: error.message
         });
       }
+    };
+
+    socket.on('pairing_response', handlePairingResponse);
+    socket.on('confirm_pairing', (payload = {}) => {
+      handlePairingResponse({ ...payload, accepted: true });
     });
 
     socket.on('pairing_cancel', (payload = {}) => {
