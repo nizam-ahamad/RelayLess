@@ -32,6 +32,8 @@ export default function App() {
   const [pinError, setPinError] = useState(false);
   const [pinSeconds, setPinSeconds] = useState(120);
   const [prompt, setPrompt] = useState(null);
+  const [verificationCode, setVerificationCode] = useState(null);
+  const [step, setStep] = useState(null);
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [transfer, setTransfer] = useState(null);
@@ -41,6 +43,8 @@ export default function App() {
   const [partnerSocketId, setPartnerSocketId] = useState(null);
   const [webrtcRole, setWebrtcRole] = useState(null);
   const [roomId, setRoomId] = useState(null);
+
+  const displayCode = verificationCode ? String(verificationCode).padStart(2, '0') : '--';
   const sessionRef = useRef(null);
   const transferAbortRef = useRef(null);
   const receiverRef = useRef(null);
@@ -104,6 +108,8 @@ export default function App() {
     setTransfer(null);
     setIncomingTransfer(null);
     setPrompt(null);
+    setVerificationCode(null);
+    setStep(null);
     setWaitingForAcceptance(false);
     setConnectionState('ready');
     if (message) {
@@ -463,6 +469,8 @@ export default function App() {
       setWebrtcRole(role);
 
       setPrompt(null);
+      setVerificationCode(null);
+      setStep('connected');
       setWaitingForAcceptance(false);
       setSelectedPeer({
         ...payload,
@@ -550,8 +558,27 @@ export default function App() {
         setPeer((current) => ({ ...(current || {}), ...nextPin }));
         setPinSeconds(nextPin.expiresIn ?? 120);
       }),
+      onSocketEvent('session_matched', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
+        const code = vCode ?? cCode;
+        setVerificationCode(code);
+        setStep('verify');
+        setPrompt({ ...payload, verificationCode: code, confirmationCode: code });
+        setWaitingForAcceptance(false);
+        setConnectionState('pairing');
+      }),
+      onSocketEvent('paired', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
+        const code = vCode ?? cCode;
+        setVerificationCode(code);
+        setStep('verify');
+        setPrompt({ ...payload, verificationCode: code, confirmationCode: code });
+        setWaitingForAcceptance(false);
+        setConnectionState('pairing');
+      }),
       onSocketEvent('pairing_prompt', (nextPrompt) => {
         currentPairingIdRef.current = nextPrompt.pairingId;
+        const code = nextPrompt.verificationCode ?? nextPrompt.confirmationCode;
+        setVerificationCode(code);
+        setStep('verify');
         setPrompt(nextPrompt);
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
@@ -598,56 +625,63 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const handleConnect = useCallback((value = pinInput) => {
-    const normalized = value.trim().toUpperCase();
-    if (normalized.length !== 6) {
-      return;
-    }
-    const myPin = peer?.pin ? peer.pin.trim().toUpperCase() : null;
-    if (myPin && normalized === myPin) {
-      setPinError(true);
-      setPinInput('');
-      showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
-      return;
-    }
-    setPinError(false);
-    emitSocket('request_pairing', {
-      pin: normalized,
-      deviceName
-    });
-    setConnectionState('requesting');
-    setPinInput('');
-  }, [deviceName, peer?.pin, pinInput, showNotice]);
+  const handleJoinSession = useCallback((scannedInput) => {
+    if (!scannedInput) return;
+    const text = String(scannedInput).trim();
+    let scannedPin = null;
+    let scannedTargetPeerId = null;
 
-  const handleScanResult = useCallback((decoded) => {
     try {
-      const url = new URL(decoded);
-      const targetPeerId = url.searchParams.get('pair');
-      if (targetPeerId) {
-        if (peer?.peerId && targetPeerId === peer.peerId) {
-          showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
-          setScannerOpen(false);
-          return;
-        }
-        emitSocket('request_pairing', { targetPeerId, deviceName });
-        setConnectionState('requesting');
-        setScannerOpen(false);
+      const url = new URL(text);
+      scannedPin = url.searchParams.get('pin');
+      scannedTargetPeerId = url.searchParams.get('pair') || url.searchParams.get('peerId') || url.searchParams.get('targetPeerId');
+    } catch {
+      const normalized = text.toUpperCase();
+      if (normalized.length === 6 && /^[A-Z0-9]{6}$/.test(normalized)) {
+        scannedPin = normalized;
+      } else {
+        scannedTargetPeerId = text;
+      }
+    }
+
+    if (scannedPin) {
+      const normalized = scannedPin.trim().toUpperCase();
+      const myPin = peer?.pin ? peer.pin.trim().toUpperCase() : null;
+      if (myPin && normalized === myPin) {
+        showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
         return;
       }
-    } catch {
-      // The QR may contain a raw peer ID; accept that as a convenience.
-      if (decoded) {
-        if (peer?.peerId && decoded === peer.peerId) {
-          showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
-          setScannerOpen(false);
-          return;
-        }
-        emitSocket('request_pairing', { targetPeerId: decoded, deviceName });
-        setConnectionState('requesting');
-        setScannerOpen(false);
-      }
+      setPinError(false);
+      emitSocket('request_pairing', {
+        pin: normalized,
+        deviceName
+      });
+      setConnectionState('requesting');
+      setPinInput('');
+      return;
     }
-  }, [deviceName, peer?.peerId, showNotice]);
+
+    if (scannedTargetPeerId) {
+      if (peer?.peerId && scannedTargetPeerId === peer.peerId) {
+        showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
+        return;
+      }
+      emitSocket('request_pairing', {
+        targetPeerId: scannedTargetPeerId,
+        deviceName
+      });
+      setConnectionState('requesting');
+    }
+  }, [deviceName, peer?.peerId, peer?.pin, showNotice]);
+
+  const handleConnect = useCallback((value = pinInput) => {
+    handleJoinSession(value);
+  }, [handleJoinSession, pinInput]);
+
+  const handleScanResult = useCallback((decoded) => {
+    setScannerOpen(false);
+    handleJoinSession(decoded);
+  }, [handleJoinSession]);
 
   const respondToPrompt = (accepted) => {
     if (!prompt) {
@@ -659,6 +693,8 @@ export default function App() {
     });
     if (!accepted) {
       setPrompt(null);
+      setVerificationCode(null);
+      setStep(null);
       setConnectionState('ready');
     } else {
       setWaitingForAcceptance(true);
@@ -989,6 +1025,8 @@ export default function App() {
 
       <ConfirmationModal
         prompt={prompt}
+        verificationCode={verificationCode}
+        displayCode={displayCode}
         hasAccepted={waitingForAcceptance}
         onAccept={() => respondToPrompt(true)}
         onReject={() => respondToPrompt(false)}

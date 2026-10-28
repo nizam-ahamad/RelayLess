@@ -62,7 +62,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
 
   pc = new RTCPeerConnection({
     iceServers: getIceServers(),
-    iceCandidatePoolSize: 10
+    iceCandidatePoolSize: 2
   });
 
   function setupDataChannel(channel) {
