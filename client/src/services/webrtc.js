@@ -1,335 +1,300 @@
+// client/src/services/webrtc.js
+import { socket as defaultSocket } from './socket.js';
+
+let pc = null;
+let dataChannel = null;
+let candidateQueue = [];
+let isSettingRemote = false;
+
 export function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:global.relay.metered.ca:80',
+      username: '3dc1c2b18b0177646c75916f',
+      credential: 'Rbg/S3hU0+KhOoEq'
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+      username: '3dc1c2b18b0177646c75916f',
+      credential: 'Rbg/S3hU0+KhOoEq'
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:443',
+      username: '3dc1c2b18b0177646c75916f',
+      credential: 'Rbg/S3hU0+KhOoEq'
+    },
+    {
+      urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+      username: '3dc1c2b18b0177646c75916f',
+      credential: 'Rbg/S3hU0+KhOoEq'
+    }
   ];
 }
 
 export const ICE_SERVERS = getIceServers();
 
-let activeSession = null;
-
-export async function handleRemoteCandidate(candidate) {
-  if (activeSession) {
-    await activeSession.handleRemoteCandidate(candidate);
+export function cleanupWebRTC() {
+  if (dataChannel) {
+    dataChannel.onopen = null;
+    dataChannel.onmessage = null;
+    dataChannel.onerror = null;
+    dataChannel.onclose = null;
+    try { dataChannel.close(); } catch (e) {}
+    dataChannel = null;
   }
+  if (pc) {
+    pc.onicecandidate = null;
+    pc.oniceconnectionstatechange = null;
+    pc.onconnectionstatechange = null;
+    pc.ondatachannel = null;
+    try { pc.close(); } catch (e) {}
+    pc = null;
+  }
+  candidateQueue = [];
+  isSettingRemote = false;
 }
 
-export async function processCandidateQueue() {
-  if (activeSession) {
-    await activeSession.processCandidateQueue();
+export async function initWebRTCSession({ role, socket = defaultSocket, pairingId, onConnected, onMessage, onError }) {
+  cleanupWebRTC();
+
+  pc = new RTCPeerConnection({
+    iceServers: getIceServers(),
+    iceCandidatePoolSize: 10
+  });
+
+  function setupDataChannel(channel) {
+    dataChannel = channel;
+    // 1 MB backpressure threshold for smooth multi-GB streaming
+    dataChannel.bufferedAmountLowThreshold = 1024 * 1024;
+
+    if (dataChannel.readyState === 'open') {
+      console.log('[WebRTC ⚡] DataChannel already open');
+      onConnected?.();
+    } else {
+      dataChannel.onopen = () => {
+        console.log('[WebRTC 🎉] DataChannel opened successfully');
+        onConnected?.();
+      };
+    }
+
+    dataChannel.onmessage = (event) => {
+      if (onMessage) onMessage(event.data);
+    };
+
+    dataChannel.onerror = (err) => {
+      console.error('[WebRTC ❌] DataChannel error:', err);
+    };
+
+    dataChannel.onclose = () => {
+      console.log('[WebRTC] DataChannel closed');
+    };
   }
+
+  // Handle local ICE candidates and emit to peer
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate && candidate.candidate) {
+      socket.emit('webrtc_signal', {
+        pairingId,
+        signal: { type: 'candidate', candidate }
+      });
+    }
+  };
+
+  // Tolerant ICE connection monitoring (do NOT fail on temporary 'disconnected')
+  pc.oniceconnectionstatechange = () => {
+    console.log('[WebRTC 📡] ICE Connection State:', pc.iceConnectionState);
+    if (pc.iceConnectionState === 'failed') {
+      console.error('[WebRTC ❌] ICE connection permanently failed');
+      if (onError) onError(new Error('WebRTC failed to establish network route.'));
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log('[WebRTC 🔗] Peer Connection State:', pc.connectionState);
+    if (pc.connectionState === 'connected') {
+      console.log('[WebRTC 🚀] Peer-to-peer link connected!');
+    } else if (pc.connectionState === 'failed') {
+      if (onError) onError(new Error('Direct WebRTC connection failed.'));
+    }
+  };
+
+  // Receiver waits for incoming remote DataChannel
+  if (role === 'receiver') {
+    pc.ondatachannel = (event) => {
+      console.log('[WebRTC 📥] Received remote DataChannel');
+      setupDataChannel(event.channel);
+    };
+  }
+
+  // Initiator sets up DataChannel and creates offer
+  if (role === 'initiator') {
+    console.log('[WebRTC 🛠️] Initiator creating DataChannel');
+    const channel = pc.createDataChannel('fileTransfer', { ordered: true });
+    setupDataChannel(channel);
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log('[WebRTC 📤] Emitting offer');
+      socket.emit('webrtc_signal', {
+        pairingId,
+        signal: { type: 'offer', sdp: offer }
+      });
+    } catch (err) {
+      console.error('[WebRTC ❌] Failed to create offer:', err);
+      if (onError) onError(err);
+    }
+  }
+
+  return {
+    async handleSignal(signalOrEnvelope) {
+      if (!pc) return;
+      const signal = (signalOrEnvelope && signalOrEnvelope.signal) ? signalOrEnvelope.signal : signalOrEnvelope;
+      if (!signal) return;
+
+      try {
+        if (signal.type === 'offer') {
+          console.log('[WebRTC 📥] Handling incoming offer');
+          isSettingRemote = true;
+          const sessionDesc = signal.sdp?.type ? signal.sdp : (typeof signal.sdp === 'string' ? { type: 'offer', sdp: signal.sdp } : (signal.type ? signal : { type: 'offer', sdp: signal.sdp }));
+          await pc.setRemoteDescription(new RTCSessionDescription(sessionDesc));
+          isSettingRemote = false;
+
+          // Flush queued candidates
+          while (candidateQueue.length > 0) {
+            const cand = candidateQueue.shift();
+            try {
+              await pc.addIceCandidate(cand instanceof RTCIceCandidate ? cand : new RTCIceCandidate(cand));
+            } catch (candErr) {
+              console.warn('[WebRTC ⚠️] Error adding queued ICE candidate:', candErr);
+            }
+          }
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          console.log('[WebRTC 📤] Emitting answer');
+          socket.emit('webrtc_signal', {
+            pairingId,
+            signal: { type: 'answer', sdp: answer }
+          });
+        } 
+        else if (signal.type === 'answer') {
+          console.log('[WebRTC 📥] Handling incoming answer');
+          isSettingRemote = true;
+          const sessionDesc = signal.sdp?.type ? signal.sdp : (typeof signal.sdp === 'string' ? { type: 'answer', sdp: signal.sdp } : (signal.type ? signal : { type: 'answer', sdp: signal.sdp }));
+          await pc.setRemoteDescription(new RTCSessionDescription(sessionDesc));
+          isSettingRemote = false;
+
+          while (candidateQueue.length > 0) {
+            const cand = candidateQueue.shift();
+            try {
+              await pc.addIceCandidate(cand instanceof RTCIceCandidate ? cand : new RTCIceCandidate(cand));
+            } catch (candErr) {
+              console.warn('[WebRTC ⚠️] Error adding queued ICE candidate:', candErr);
+            }
+          }
+        } 
+        else if (signal.type === 'candidate' && signal.candidate) {
+          const rawCand = signal.candidate;
+          if (pc.remoteDescription && pc.remoteDescription.type && !isSettingRemote) {
+            try {
+              await pc.addIceCandidate(rawCand instanceof RTCIceCandidate ? rawCand : new RTCIceCandidate(rawCand));
+            } catch (candErr) {
+              console.warn('[WebRTC ⚠️] Error adding ICE candidate:', candErr);
+            }
+          } else {
+            candidateQueue.push(rawCand);
+          }
+        }
+      } catch (err) {
+        console.error('[WebRTC ❌] Signal handling error:', err);
+      }
+    },
+
+    sendChunk(chunk) {
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(chunk);
+        return true;
+      }
+      return false;
+    },
+
+    getDataChannel() {
+      return dataChannel;
+    }
+  };
 }
 
 export class WebRtcSession {
-  constructor({ role, pairingId, partnerSocketId, onMessage, onStateChange, onSignal, onConnected, onError }) {
+  constructor({ role, socket = defaultSocket, pairingId, onConnected, onMessage, onError, onStateChange, onSignal }) {
     this.role = role;
+    this.socket = socket;
     this.pairingId = pairingId;
-    this.partnerSocketId = partnerSocketId;
+    this.onConnected = onConnected;
     this.onMessage = onMessage;
+    this.onError = onError;
     this.onStateChange = onStateChange;
     this.onSignal = onSignal;
-    this.onConnected = onConnected;
-    this.onError = onError;
-    this.peerConnection = null;
-    this.dataChannel = null;
-    this.candidateQueue = [];
-    this.messageQueue = Promise.resolve();
-    this.closed = false;
-    this.iceFailureTimer = null;
+    this.session = null;
   }
 
-  sendSignal(signal) {
-    if (this.onSignal) {
-      this.onSignal({
-        pairingId: this.pairingId,
-        signal
-      });
-    } else {
-      emitSocket('webrtc_signal', {
-        pairingId: this.pairingId,
-        signal
-      });
-    }
-  }
-
-  emitSignal(signal) {
-    this.sendSignal(signal);
+  get dataChannel() {
+    return dataChannel;
   }
 
   async start() {
-    activeSession = this;
-    console.log('[WebRTC] Role assigned:', this.role, 'Pairing ID:', this.pairingId);
-    this.peerConnection = new RTCPeerConnection({ iceServers: getIceServers() });
-
-    // Trickle ICE: emit candidates immediately the millisecond they are generated
-    this.peerConnection.onicecandidate = ({ candidate }) => {
-      if (candidate) {
-        console.log('[WebRTC 📤] Emitting candidate to server...');
-        this.sendSignal({ type: 'candidate', candidate });
+    const socketProxy = this.socket || {
+      emit: (event, payload) => {
+        if (event === 'webrtc_signal') {
+          if (this.onSignal) {
+            this.onSignal(payload);
+          } else {
+            defaultSocket.emit(event, payload);
+          }
+        }
       }
     };
 
-    this.peerConnection.onconnectionstatechange = () => {
-      const state = this.peerConnection?.connectionState;
-      console.log('[WebRTC] Connection State:', state);
-      if (state === 'connected') {
-        if (this.iceFailureTimer) {
-          clearTimeout(this.iceFailureTimer);
-          this.iceFailureTimer = null;
-        }
+    this.session = await initWebRTCSession({
+      role: this.role,
+      socket: socketProxy,
+      pairingId: this.pairingId,
+      onConnected: () => {
         this.onConnected?.();
-        this.onStateChange?.('connected');
-        if (this.dataChannel?.readyState === 'open') {
-          this.onStateChange?.('data-channel-open');
-        }
-      } else if (state === 'disconnected') {
-        // DO NOTHING. Transient state during candidate checking/network shift.
-        console.log('[WebRTC] Connection State: disconnected (transient, ignoring)');
-      } else if (state === 'failed') {
+        this.onStateChange?.('data-channel-open');
+      },
+      onMessage: this.onMessage,
+      onError: (err) => {
+        this.onError?.(err);
         this.onStateChange?.('failed');
-        this.onError?.(new Error('WebRTC connection failed.'));
-      } else if (state === 'closed') {
-        this.onStateChange?.('closed');
       }
-    };
-
-    this.peerConnection.oniceconnectionstatechange = () => {
-      const state = this.peerConnection?.iceConnectionState;
-      console.log('[WebRTC] ICE Connection State:', state);
-      if (state === 'connected' || state === 'completed') {
-        if (this.iceFailureTimer) {
-          clearTimeout(this.iceFailureTimer);
-          this.iceFailureTimer = null;
-        }
-        if (this.dataChannel?.readyState === 'open') {
-          this.onConnected?.();
-          this.onStateChange?.('data-channel-open');
-        }
-      } else if (state === 'disconnected') {
-        // DO NOTHING. Transient state during candidate checking. Let it continue negotiating.
-        console.log('[WebRTC] ICE Connection State: disconnected (transient, ignoring)');
-      } else if (state === 'failed') {
-        if (!this.iceFailureTimer) {
-          console.warn('[WebRTC] ICE connection state failed - waiting 5s grace period before failing...');
-          this.iceFailureTimer = setTimeout(() => {
-            const currentState = this.peerConnection?.iceConnectionState;
-            if (currentState === 'failed') {
-              console.error('[WebRTC] ICE connection failed permanently after 5s grace period');
-              this.onStateChange?.('failed');
-              this.onError?.(new Error('WebRTC ICE connection failed.'));
-            }
-          }, 5000);
-        }
-      }
-    };
-
-    // Receiver: Set pc.ondatachannel = (event) => setupDataChannel(event.channel)
-    this.peerConnection.ondatachannel = (event) => {
-      console.log('[WebRTC ⚡] Receiver received remote DataChannel!');
-      this.setupDataChannel(event.channel);
-    };
-
-    // Initiator: createDataChannel, createOffer, emit offer
-    if (this.role === 'initiator') {
-      try {
-        console.log('[WebRTC 🚀] Initiator initializing DataChannel & Offer...');
-        const channel = this.peerConnection.createDataChannel('fileTransfer', {
-          ordered: true
-        });
-        this.setupDataChannel(channel);
-
-        const offer = await this.peerConnection.createOffer();
-        await this.peerConnection.setLocalDescription(offer);
-
-        console.log('[WebRTC 📤] Emitting offer to server...');
-        this.sendSignal({
-          type: 'offer',
-          sdp: offer
-        });
-      } catch (err) {
-        console.error('[WebRTC ❌] Initiator setup failed:', err);
-        this.onError?.(err);
-      }
-    }
+    });
+    return this.session;
   }
 
-  setupDataChannel(channel) {
-    if (!channel) return;
-    this.dataChannel = channel;
-    channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
-
-    const onConnected = () => {
-      console.log('[WebRTC] ⚡ DataChannel OPENED!');
-      this.onConnected?.();
-      this.onStateChange?.('data-channel-open');
-    };
-
-    if (channel.readyState === 'open') {
-      onConnected();
-    } else {
-      channel.onopen = () => onConnected();
-    }
-
-    channel.onclose = () => {
-      console.log('[WebRTC] DataChannel closed');
-      this.onStateChange?.('data-channel-closed');
-    };
-    channel.onerror = (event) => {
-      console.error('[WebRTC] DataChannel error:', event.error);
-      this.onError?.(event.error ?? new Error('Data channel error.'));
-    };
-    channel.onmessage = (event) => {
-      this.messageQueue = this.messageQueue
-        .then(() => this.onMessage(event.data))
-        .catch((error) => this.onError?.(error));
-    };
-  }
-
-  setupDataChannelEvents(channel) {
-    return this.setupDataChannel(channel);
-  }
-
-  async handleRemoteCandidate(candidate) {
-    if (!candidate) return;
-    const rawCandidate = (candidate.candidate && typeof candidate.candidate === 'object') ? candidate.candidate : candidate;
-    if (!this.peerConnection || !this.peerConnection.remoteDescription) {
-      console.log('[WebRTC] Buffering ICE candidate (remote description not ready yet)');
-      this.candidateQueue.push(rawCandidate);
-      return;
-    }
-    try {
-      const iceCandidate = rawCandidate instanceof RTCIceCandidate ? rawCandidate : new RTCIceCandidate(rawCandidate);
-      await this.peerConnection.addIceCandidate(iceCandidate);
-      console.log('[WebRTC] Added remote ICE candidate successfully');
-    } catch (err) {
-      console.error('[WebRTC] Failed to add candidate:', err);
-    }
-  }
-
-  async processCandidateQueue() {
-    if (this.candidateQueue.length > 0) {
-      console.log(`[WebRTC] Draining ${this.candidateQueue.length} buffered ICE candidates`);
-    }
-    while (this.candidateQueue.length > 0) {
-      const candidate = this.candidateQueue.shift();
-      try {
-        const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
-        await this.peerConnection.addIceCandidate(iceCandidate);
-      } catch (err) {
-        console.error('[WebRTC] Failed to drain candidate:', err);
-      }
-    }
-  }
-
-  async handleSignal(signalOrEnvelope, maybeData) {
-    if (!this.peerConnection) {
-      await this.start();
-    }
-
-    let signal = signalOrEnvelope;
-    if (signalOrEnvelope && typeof signalOrEnvelope === 'object' && signalOrEnvelope.signal !== undefined) {
-      signal = signalOrEnvelope.signal;
-    } else if (maybeData !== undefined) {
-      signal = maybeData;
-    }
-
-    if (!signal) return;
-
-    const signalType = signal.type || (signal.candidate ? 'candidate' : (signalOrEnvelope?.type ?? null));
-
-    if (signalType === 'offer') {
-      try {
-        console.log('[WebRTC 📥] Receiver got offer! Creating answer...');
-        const sdpData = signal.sdp || signal;
-        const sessionDesc = sdpData?.type
-          ? sdpData
-          : (typeof sdpData === 'string'
-              ? { type: 'offer', sdp: sdpData }
-              : (signal?.type ? signal : { type: 'offer', sdp: sdpData }));
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
-        await this.processCandidateQueue();
-        const answer = await this.peerConnection.createAnswer();
-        await this.peerConnection.setLocalDescription(answer);
-
-        console.log('[WebRTC 📤] Emitting answer to server...');
-        this.sendSignal({
-          type: 'answer',
-          sdp: answer
-        });
-      } catch (err) {
-        console.error('[WebRTC ❌] Receiver failed to handle offer:', err);
-        this.onError?.(err);
-      }
-      return;
-    }
-
-    if (signalType === 'answer') {
-      try {
-        console.log('[WebRTC 📥] Initiator got answer! Setting remote description...');
-        const sdpData = signal.sdp || signal;
-        const sessionDesc = sdpData?.type
-          ? sdpData
-          : (typeof sdpData === 'string'
-              ? { type: 'answer', sdp: sdpData }
-              : (signal?.type ? signal : { type: 'answer', sdp: sdpData }));
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDesc));
-        await this.processCandidateQueue();
-      } catch (err) {
-        console.error('[WebRTC ❌] Initiator failed to handle answer:', err);
-        this.onError?.(err);
-      }
-      return;
-    }
-
-    if (signalType === 'candidate' || signal.candidate) {
-      console.log('[WebRTC] 📥 Received remote ICE candidate');
-      const candidate = signal.candidate !== undefined ? signal.candidate : signal;
-      await this.handleRemoteCandidate(candidate);
+  async handleSignal(signal) {
+    if (this.session) {
+      await this.session.handleSignal(signal);
     }
   }
 
   send(data) {
-    if (this.dataChannel?.readyState !== 'open') {
-      throw new Error('The data channel is not open.');
+    if (dataChannel && dataChannel.readyState === 'open') {
+      dataChannel.send(data);
+      return true;
     }
-    this.dataChannel.send(data);
+    throw new Error('The data channel is not open.');
+  }
+
+  sendChunk(chunk) {
+    return this.session ? this.session.sendChunk(chunk) : false;
   }
 
   close() {
-    this.closed = true;
-    if (this.iceFailureTimer) {
-      clearTimeout(this.iceFailureTimer);
-      this.iceFailureTimer = null;
-    }
-    this.candidateQueue = [];
-    this.messageQueue = Promise.resolve();
-    if (this.dataChannel) {
-      this.dataChannel.onopen = null;
-      this.dataChannel.onclose = null;
-      this.dataChannel.onerror = null;
-      this.dataChannel.onmessage = null;
-      try {
-        this.dataChannel.close();
-      } catch {}
-      this.dataChannel = null;
-    }
-    if (this.peerConnection) {
-      this.peerConnection.onicecandidate = null;
-      this.peerConnection.onconnectionstatechange = null;
-      this.peerConnection.oniceconnectionstatechange = null;
-      this.peerConnection.ondatachannel = null;
-      try {
-        this.peerConnection.close();
-      } catch {}
-      this.peerConnection = null;
-    }
-    if (activeSession === this) {
-      activeSession = null;
-    }
+    cleanupWebRTC();
   }
 }
 

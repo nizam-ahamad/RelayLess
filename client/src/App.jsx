@@ -244,6 +244,7 @@ export default function App() {
     const targetName = partnerName || 'device';
     const session = new WebRtcSession({
       role,
+      socket,
       pairingId: pairingId || currentPairingIdRef.current,
       partnerSocketId: partnerSocketId || partnerSocketIdRef.current,
       onMessage: handleChannelMessage,
