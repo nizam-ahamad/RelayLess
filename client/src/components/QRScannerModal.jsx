@@ -11,8 +11,9 @@ export default function QRScannerModal({ onResult, onClose }) {
       try {
         await scannerRef.current.stop();
         scannerRef.current.clear();
+        scannerRef.current = null;
       } catch (err) {
-        console.warn('[Scanner] Camera stop warning:', err);
+        console.warn('[Scanner] Camera release warning:', err);
       }
     }
   };
@@ -21,18 +22,26 @@ export default function QRScannerModal({ onResult, onClose }) {
     if (isStoppingRef.current) return;
     isStoppingRef.current = true;
 
-    // Immediately pause/stop the scanner instance and release camera tracks
-    if (scannerRef.current) {
-      try {
+    // 1. Immediately stop camera stream to release hardware & avoid unmount crash
+    try {
+      if (scannerRef.current) {
         await scannerRef.current.stop();
         scannerRef.current.clear();
-      } catch (err) {
-        console.warn('[Scanner] Camera stop warning:', err);
+        scannerRef.current = null;
       }
+    } catch (err) {
+      console.warn('[Scanner] Camera release warning:', err);
     }
 
-    // Only after the camera stream is stopped, invoke the join session logic
-    onResult(decodedText);
+    // 2. Parse PIN safely (whether text is "123456" or "https://...?pin=123456")
+    let pin = decodedText ? String(decodedText).trim() : '';
+    if (pin.includes('pin=')) {
+      const urlParams = new URLSearchParams(pin.split('?')[1] || '');
+      pin = urlParams.get('pin') || pin;
+    }
+
+    // 3. Invoke result callback
+    onResult(pin);
   };
 
   useEffect(() => {
@@ -61,8 +70,11 @@ export default function QRScannerModal({ onResult, onClose }) {
         try {
           scannerRef.current.stop().catch(() => {}).then(() => {
             try { scannerRef.current?.clear(); } catch (e) {}
+            scannerRef.current = null;
           });
-        } catch (e) {}
+        } catch (e) {
+          scannerRef.current = null;
+        }
       }
     };
   }, []);

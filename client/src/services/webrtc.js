@@ -6,35 +6,33 @@ let dataChannel = null;
 let candidateQueue = [];
 let isSettingRemote = false;
 
-export function getIceServers() {
+let cachedIceServers = null;
+
+export async function getIceServers() {
+  if (cachedIceServers) return cachedIceServers;
+  try {
+    const baseUrl = import.meta.env?.VITE_SERVER_URL || '';
+    const res = await fetch(`${baseUrl}/api/webrtc-config`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+        cachedIceServers = data.iceServers;
+        return cachedIceServers;
+      }
+    }
+  } catch (err) {
+    console.warn('[WebRTC ⚠️] Failed to load backend ICE servers, falling back to STUN:', err);
+  }
   return [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun.relay.metered.ca:80' },
-    {
-      urls: 'turn:global.relay.metered.ca:80',
-      username: '3dc1c2b18b0177646c75916f',
-      credential: 'Rbg/S3hU0+KhOoEq'
-    },
-    {
-      urls: 'turn:global.relay.metered.ca:80?transport=tcp',
-      username: '3dc1c2b18b0177646c75916f',
-      credential: 'Rbg/S3hU0+KhOoEq'
-    },
-    {
-      urls: 'turn:global.relay.metered.ca:443',
-      username: '3dc1c2b18b0177646c75916f',
-      credential: 'Rbg/S3hU0+KhOoEq'
-    },
-    {
-      urls: 'turns:global.relay.metered.ca:443?transport=tcp',
-      username: '3dc1c2b18b0177646c75916f',
-      credential: 'Rbg/S3hU0+KhOoEq'
-    }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ];
 }
 
-export const ICE_SERVERS = getIceServers();
+export const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+];
 
 export function cleanupWebRTC() {
   if (dataChannel) {
@@ -60,8 +58,10 @@ export function cleanupWebRTC() {
 export async function initWebRTCSession({ role, socket = defaultSocket, pairingId, onConnected, onMessage, onError }) {
   cleanupWebRTC();
 
+  const iceServers = await getIceServers();
+
   pc = new RTCPeerConnection({
-    iceServers: getIceServers(),
+    iceServers,
     iceCandidatePoolSize: 2
   });
 

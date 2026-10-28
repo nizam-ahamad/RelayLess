@@ -12,9 +12,10 @@ export default function ConfirmationModal({
 
   const rawCode = (verificationCode !== undefined && verificationCode !== null && verificationCode !== '')
     ? verificationCode
-    : (prompt?.verificationCode ?? prompt?.confirmationCode ?? prompt?.code);
+    : (prompt?.verificationCode ?? prompt?.confirmationCode ?? prompt?.code ?? propDisplayCode);
 
-  const displayCode = propDisplayCode || (rawCode ? String(rawCode).padStart(2, '0') : '--');
+  // Safe defensive string conversion
+  const codeStr = rawCode ? String(rawCode).padStart(2, '0') : '--';
   const otherDevice = prompt?.otherDeviceName || prompt?.deviceName || 'the other device';
 
   return (
@@ -23,9 +24,9 @@ export default function ConfirmationModal({
         <div className="modal-eyebrow">Mutual confirmation</div>
         <h2 id="pairing-title">Connect {otherDevice}?</h2>
         <p className="muted">Compare this code on both screens before allowing the connection.</p>
-        <div className="confirmation-code" aria-label={`Confirmation code ${displayCode}`}>
-          <span className="code-digit">{displayCode[0]}</span>
-          <span className="code-digit">{displayCode[1]}</span>
+        <div className="confirmation-code" aria-label={`Confirmation code ${codeStr}`}>
+          <span className="code-digit">{codeStr[0] ?? '-'}</span>
+          <span className="code-digit">{codeStr[1] ?? '-'}</span>
         </div>
         <p className="muted small">Both people must accept to begin the encrypted WebRTC handshake.</p>
         {hasAccepted ? (

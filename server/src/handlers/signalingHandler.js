@@ -77,6 +77,21 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           target: pairingParticipant(targetPeerObj, requesterPeer)
         };
 
+        io.to(targetPeerObj.socketId).emit('session_matched', {
+          pairingId: pairing.pairingId,
+          role: 'initiator',
+          verificationCode: pairing.confirmationCode,
+          confirmationCode: pairing.confirmationCode,
+          otherDeviceName: requesterPeer.deviceName
+        });
+        io.to(requesterPeer.socketId).emit('session_matched', {
+          pairingId: pairing.pairingId,
+          role: 'receiver',
+          verificationCode: pairing.confirmationCode,
+          confirmationCode: pairing.confirmationCode,
+          otherDeviceName: targetPeerObj.deviceName
+        });
+
         io.to(requesterPeer.socketId).emit('pairing_prompt', {
           ...prompt,
           role: 'requester',
@@ -166,6 +181,38 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
 
         const roomName = `room_${pairing.id || pairing.pairingId}`;
         console.log(`[Signaling] Pairing confirmed: initiator=${initiatorSocketId} <-> target=${targetSocketId}`);
+
+        io.to(initiatorSocketId).emit('start_transfer_session', {
+          roomId: roomName,
+          pairingId: pairing.id || pairing.pairingId,
+          id: pairing.id || pairing.pairingId,
+          role: 'initiator',
+          initiator: true,
+          partnerSocketId: targetSocketId,
+          partnerName: target.deviceName || pairing.targetDeviceName,
+          deviceName: target.deviceName || pairing.targetDeviceName,
+          peerId: target.peerId,
+          confirmationCode: pairing.confirmationCode,
+          verificationCode: pairing.confirmationCode,
+          initiatorSocketId,
+          targetSocketId
+        });
+
+        io.to(targetSocketId).emit('start_transfer_session', {
+          roomId: roomName,
+          pairingId: pairing.id || pairing.pairingId,
+          id: pairing.id || pairing.pairingId,
+          role: 'receiver',
+          initiator: false,
+          partnerSocketId: initiatorSocketId,
+          partnerName: requester.deviceName || pairing.initiatorDeviceName,
+          deviceName: requester.deviceName || pairing.initiatorDeviceName,
+          peerId: requester.peerId,
+          confirmationCode: pairing.confirmationCode,
+          verificationCode: pairing.confirmationCode,
+          initiatorSocketId,
+          targetSocketId
+        });
 
         io.to(initiatorSocketId).emit('pairing_confirmed', {
           roomId: roomName,

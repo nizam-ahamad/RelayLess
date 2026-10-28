@@ -4,7 +4,16 @@ server/node_modules/
 client/dist/
 .env
 .env.*
+.env.local
+server/.env
+server/.env.*
+server/.env.local
+client/.env
+client/.env.*
+client/.env.local
 !.env.example
+!server/.env.example
+!client/.env.example
 *.log
 .DS_Store
 omnirush.json

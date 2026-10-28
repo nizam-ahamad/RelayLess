@@ -499,9 +499,13 @@ export default function App() {
   }, [handleChannelMessage, sendSignal, showNotice]);
 
   const handlePairingConfirmed = useCallback(async (payload) => {
-    console.log('[Signaling] ⚡ Received pairing_confirmed event:', payload);
+    console.log('[Signaling] ⚡ Received pairing_confirmed / start_transfer_session event:', payload);
     try {
       const pairingId = payload.pairingId || payload.id;
+      if (sessionRef.current && currentPairingIdRef.current === pairingId && connectionState === 'connecting') {
+        console.log('[Signaling] WebRTC session already initializing for:', pairingId);
+        return;
+      }
       const role = payload.role || (payload.initiator ? 'initiator' : 'receiver');
       const targetSocketId = payload.partnerSocketId || (role === 'initiator' ? payload.targetSocketId : payload.initiatorSocketId) || payload.otherSocketId;
 
@@ -605,17 +609,22 @@ export default function App() {
         setPeer((current) => ({ ...(current || {}), ...nextPin }));
         setPinSeconds(nextPin.expiresIn ?? 120);
       }),
-      onSocketEvent('session_matched', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
+      onSocketEvent('session_matched', ({ verificationCode: vCode, confirmationCode: cCode, role, ...payload } = {}) => {
         const code = vCode ?? cCode;
         const pId = payload.pairingId || payload.id;
         currentPairingIdRef.current = pId;
         setPairingId(pId);
         setVerificationCode(code);
+        if (role) {
+          setWebrtcRole(role);
+          webrtcRoleRef.current = role;
+        }
         setStep('verify');
-        setPrompt({ ...payload, pairingId: pId, verificationCode: code, confirmationCode: code });
+        setPrompt({ ...payload, pairingId: pId, role, verificationCode: code, confirmationCode: code });
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
+      onSocketEvent('start_transfer_session', (payload) => handlePairingConfirmedRef.current(payload)),
       onSocketEvent('paired', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
         const code = vCode ?? cCode;
         const pId = payload.pairingId || payload.id;
@@ -728,14 +737,24 @@ export default function App() {
     }
   }, [deviceName, peer?.peerId, peer?.pin, showNotice]);
 
+  const handleJoinWithPin = useCallback((pinOrInput) => {
+    if (!pinOrInput) return;
+    let pin = String(pinOrInput).trim();
+    if (pin.includes('pin=')) {
+      const urlParams = new URLSearchParams(pin.split('?')[1] || '');
+      pin = urlParams.get('pin') || pin;
+    }
+    handleJoinSession(pin);
+  }, [handleJoinSession]);
+
   const handleConnect = useCallback((value = pinInput) => {
-    handleJoinSession(value);
-  }, [handleJoinSession, pinInput]);
+    handleJoinWithPin(value);
+  }, [handleJoinWithPin, pinInput]);
 
   const handleScanResult = useCallback((decoded) => {
     setScannerOpen(false);
-    handleJoinSession(decoded);
-  }, [handleJoinSession]);
+    handleJoinWithPin(decoded);
+  }, [handleJoinWithPin]);
 
   const respondToPrompt = (accepted) => {
     if (!prompt) {

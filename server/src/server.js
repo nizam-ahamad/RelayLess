@@ -117,6 +117,39 @@ app.get('/health', (_request, response) => {
   response.status(200).json({ ok: true });
 });
 
+app.get('/api/webrtc-config', async (_req, res) => {
+  const appName = process.env.METERED_APP_NAME;
+  const apiKey = process.env.METERED_API_KEY;
+
+  if (appName && apiKey) {
+    try {
+      const response = await fetch(`https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`);
+      if (response.ok) {
+        const iceServers = await response.json();
+        return res.json({ iceServers });
+      }
+    } catch (e) {
+      console.error('Metered API fetch error:', e);
+    }
+  }
+
+  // Fallback static TURN from env vars if API key isn't provided
+  const username = process.env.TURN_USERNAME || '3dc1c2b18b0177646c75916f';
+  const credential = process.env.TURN_PASSWORD || 'Rbg/S3hU0+KhOoEq';
+
+  return res.json({
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.relay.metered.ca:80' },
+      { urls: 'turn:global.relay.metered.ca:80', username, credential },
+      { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username, credential },
+      { urls: 'turn:global.relay.metered.ca:443', username, credential },
+      { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username, credential }
+    ]
+  });
+});
+
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist, { index: 'index.html' }));
   app.get('*', (request, response, next) => {
