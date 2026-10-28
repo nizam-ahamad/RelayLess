@@ -38,7 +38,7 @@ export function getIceServers() {
   return STATIC_ICE_SERVERS;
 }
 
-export const CHUNK_SIZE = 16384; // 16 KB safe limit for mobile cellular/TURN
+export const CHUNK_SIZE = 16384; // 16 KB strict limit for mobile cellular/TURN SCTP
 export const MAX_BUFFER_AMOUNT = 65536; // 64 KB max backpressure ceiling
 
 export function cleanupWebRTC() {

@@ -35,6 +35,7 @@ export default function App() {
   const [pairingId, setPairingId] = useState(null);
   const [verificationCode, setVerificationCode] = useState(null);
   const [webrtcRole, setWebrtcRole] = useState(null);
+  const setRole = setWebrtcRole;
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [step, setStep] = useState('idle');
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
@@ -47,9 +48,11 @@ export default function App() {
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [partnerSocketId, setPartnerSocketId] = useState(null);
   const [roomId, setRoomId] = useState(null);
-  const [isChannelOpen, setIsChannelOpen] = useState(false);
-  const isDataChannelReady = isChannelOpen;
-  const setIsDataChannelReady = setIsChannelOpen;
+  const [isChannelReady, setIsChannelReady] = useState(false);
+  const isChannelOpen = isChannelReady;
+  const setIsChannelOpen = setIsChannelReady;
+  const isDataChannelReady = isChannelReady;
+  const setIsDataChannelReady = setIsChannelReady;
 
   const displayCode = verificationCode ? String(verificationCode).padStart(2, '0') : '--';
   const sessionRef = useRef(null);
@@ -423,7 +426,8 @@ export default function App() {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
         }
-        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isChannelOpen = true.');
+        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isChannelReady = true.');
+        setIsChannelReady(true);
         setIsChannelOpen(true);
         setConnectionState('connected');
         emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
@@ -443,7 +447,8 @@ export default function App() {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
-          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isChannelOpen = true.');
+          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isChannelReady = true.');
+          setIsChannelReady(true);
           setIsChannelOpen(true);
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
@@ -614,20 +619,17 @@ export default function App() {
         setPinSeconds(nextPin.expiresIn ?? 120);
       }),
       onSocketEvent('session_matched', (data = {}) => {
-        const rawCode = data.verificationCode || data.code || data.confirmationCode;
-        const code = rawCode ? String(rawCode).padStart(2, '0') : '--';
-        console.log('[Socket 🔑] Received verification code:', code);
-        const pId = data.pairingId || data.id;
-        currentPairingIdRef.current = pId;
-        setPairingId(pId);
+        const code = data.verificationCode || data.code;
         setVerificationCode(code);
+        setPairingId(data.pairingId);
+        setRole(data.role);
+        setShowConfirmationModal(true);
+        currentPairingIdRef.current = data.pairingId;
         if (data.role) {
-          setWebrtcRole(data.role);
           webrtcRoleRef.current = data.role;
         }
         setStep('verify');
-        setPrompt({ ...data, pairingId: pId, role: data.role, verificationCode: code, code });
-        setShowConfirmationModal(true);
+        setPrompt({ ...data, pairingId: data.pairingId, role: data.role, verificationCode: code, code });
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
@@ -1119,23 +1121,23 @@ export default function App() {
             <div className="connected-header">
               <div>
                 <div className="section-kicker">
-                  {isChannelOpen ? 'Secure bridge established' : 'Direct Link Negotiation'}
+                  {isChannelReady ? 'Secure bridge established' : 'Direct Link Negotiation'}
                 </div>
                 <h2>
-                  {isChannelOpen
-                    ? 'Ready to move files — Connected directly to peer'
-                    : 'Establishing encrypted peer-to-peer bridge...'}
+                  {isChannelReady
+                    ? 'Ready to move files'
+                    : 'Connecting encrypted P2P bridge...'}
                 </h2>
                 <p className="muted">
-                  {isChannelOpen
+                  {isChannelReady
                     ? `Connected directly to ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'the other device'}. The signaling server is no longer involved in your transfer.`
-                    : 'Establishing encrypted peer-to-peer bridge...'}
+                    : 'Connecting encrypted P2P bridge...'}
                 </p>
-                {!isChannelOpen && (
+                {!isChannelReady && (
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.25)' }}>
                     <div className="pulse-dot" style={{ margin: 0 }} />
                     <span style={{ fontSize: '12px', color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>
-                      Establishing encrypted peer-to-peer bridge...
+                      Connecting encrypted P2P bridge...
                     </span>
                   </div>
                 )}
@@ -1149,7 +1151,7 @@ export default function App() {
             </div>
             <FileDropZone
               onFiles={handleFiles}
-              disabled={!isChannelOpen || Boolean(transfer && transfer.status === 'Sending')}
+              disabled={!isChannelReady || Boolean(transfer && transfer.status === 'Sending')}
             />
             <TransferProgress transfer={transfer} onCancel={transfer?.status === 'Sending' ? cancelTransfer : undefined} />
             <div className="transfer-footnote"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
@@ -1164,7 +1166,7 @@ export default function App() {
       </main>
 
       <ConfirmationModal
-        isOpen={showConfirmationModal && Boolean(prompt || verificationCode)}
+        isOpen={showConfirmationModal}
         prompt={prompt}
         code={verificationCode}
         verificationCode={verificationCode}

@@ -9,68 +9,68 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
     if (!isOpen) return;
 
     isStoppingRef.current = false;
-    const scannerId = "reader";
+    const scannerId = "qr-reader-box";
     const html5QrCode = new Html5Qrcode(scannerId);
     scannerRef.current = html5QrCode;
 
-    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+    const stopHardwareCamera = async () => {
+      // 1. Manually stop all active video stream tracks at browser media level
+      const videoElem = document.querySelector(`#${scannerId} video`);
+      if (videoElem && videoElem.srcObject) {
+        const stream = videoElem.srcObject;
+        stream.getTracks().forEach(track => {
+          track.stop();
+          track.enabled = false;
+        });
+        videoElem.srcObject = null;
+      }
+
+      // 2. Safely stop the library scanner without throwing DOMException
+      if (html5QrCode.isScanning) {
+        try {
+          await html5QrCode.stop();
+        } catch (e) {
+          // Ignore harmless stop warnings
+        }
+      }
+      try {
+        html5QrCode.clear();
+      } catch (e) {}
+      scannerRef.current = null;
+    };
 
     html5QrCode.start(
       { facingMode: "environment" },
-      config,
+      { fps: 10, qrbox: { width: 250, height: 250 } },
       async (decodedText) => {
         if (isStoppingRef.current) return;
         isStoppingRef.current = true;
 
-        // Parse 6-character PIN safely
+        // Parse 6-character PIN
         const match = decodedText.match(/(?:pin=|^)([A-Z0-9]{6})/i);
         const pin = match ? match[1].toUpperCase() : decodedText.trim().toUpperCase();
 
-        try {
-          // Explicitly stop hardware stream tracks
-          const video = document.querySelector('#reader video');
-          if (video && video.srcObject) {
-            video.srcObject.getTracks().forEach(t => t.stop());
-          }
-          if (html5QrCode.isScanning) {
-            await html5QrCode.stop();
-          }
-          html5QrCode.clear();
-        } catch (err) {
-          // Ignore harmless stop warnings on unmount
-        } finally {
-          scannerRef.current = null;
-        }
+        await stopHardwareCamera();
 
-        // Defer UI update slightly so DOM unmount occurs after camera release
+        // Small delay to allow React DOM to settle before opening verification modal
         setTimeout(() => {
           onClose();
-          if (onScanSuccess) onScanSuccess(pin);
-          else if (onResult) onResult(pin);
-        }, 50);
+          if (onScanSuccess) {
+            onScanSuccess(pin);
+          } else if (onResult) {
+            onResult(pin);
+          }
+        }, 60);
       },
-      () => {}
+      () => {} // Ignore continuous scan misses
     ).catch((err) => {
-      console.warn('[Scanner] Camera start failed:', err);
+      console.warn('[Scanner] Camera start error:', err);
     });
 
     return () => {
-      if (scannerRef.current && !isStoppingRef.current) {
+      if (!isStoppingRef.current) {
         isStoppingRef.current = true;
-        try {
-          const video = document.querySelector('#reader video');
-          if (video && video.srcObject) {
-            video.srcObject.getTracks().forEach(t => t.stop());
-          }
-          if (scannerRef.current.isScanning) {
-            scannerRef.current.stop().catch(() => {}).finally(() => {
-              try { scannerRef.current?.clear(); } catch(e) {}
-              scannerRef.current = null;
-            });
-          }
-        } catch (e) {
-          scannerRef.current = null;
-        }
+        stopHardwareCamera();
       }
     };
   }, [isOpen]);
@@ -93,7 +93,7 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
       }}
     >
       <div
-        className="relative w-full max-w-sm rounded-2xl bg-slate-900 p-6 border border-slate-800 text-center modal-card"
+        className="relative w-full max-w-sm rounded-2xl bg-slate-900 p-6 border border-slate-800 text-center shadow-2xl modal-card"
         style={{
           position: 'relative',
           width: '100%',
@@ -106,8 +106,8 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
         }}
       >
         <h3
-          className="text-lg font-semibold text-white mb-2"
-          style={{ fontSize: '1.125rem', fontWeight: 600, color: '#fff', marginBottom: '0.5rem' }}
+          className="text-lg font-semibold text-white mb-1"
+          style={{ fontSize: '1.125rem', fontWeight: 600, color: '#fff', marginBottom: '0.25rem' }}
         >
           Scan QR Code
         </h3>
@@ -117,11 +117,13 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
         >
           Point your camera at the other screen
         </p>
+
         <div
-          id="reader"
+          id="qr-reader-box"
           className="w-full overflow-hidden rounded-xl bg-black min-h-[260px]"
           style={{ width: '100%', overflow: 'hidden', borderRadius: '12px', backgroundColor: '#000', minHeight: '260px' }}
         ></div>
+
         <button
           onClick={onClose}
           className="mt-4 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium text-slate-300 transition-colors button button-secondary"
