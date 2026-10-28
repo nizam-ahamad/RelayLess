@@ -151,19 +151,33 @@ app.get('/api/webrtc-config', async (_req, res) => {
   });
 });
 
-// 1. Serve static assets with correct MIME types
-app.use(express.static(clientDistPath));
+// Serve hashed assets (/assets/index-xxx.js) with 1-year immutable cache
+app.use(
+  '/assets',
+  express.static(path.join(clientDistPath, 'assets'), {
+    immutable: true,
+    maxAge: '1y'
+  })
+);
 
-// 2. Explicitly guard /assets to prevent returning index.html on missing files
+// If an asset under /assets does not exist, return a strict 404 text response (NEVER index.html)
 app.use('/assets', (req, res) => {
   res.status(404).type('text/plain').send('Asset not found');
 });
 
-// 3. SPA wildcard catch-all for React client routing (placed AFTER api and static routes)
+// Serve remaining static files (favicon, manifest, robots.txt)
+app.use(express.static(clientDistPath));
+
 app.get('*', (req, res, next) => {
+  // Let API requests pass through
   if (req.path.startsWith('/api')) {
     return next();
   }
+
+  // Force browsers to always fetch fresh index.html with new asset hashes
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(path.join(clientDistPath, 'index.html'));
 });
 

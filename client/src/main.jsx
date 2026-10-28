@@ -4,22 +4,23 @@ import App from './App.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import './index.css';
 
-if ('serviceWorker' in navigator) {
-  if (import.meta.env.PROD) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {
-        // Offline shell support is progressive; a failed registration must not block sharing.
-      });
-    });
-  } else if (import.meta.env.DEV) {
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-      registrations.forEach((reg) => reg.unregister());
-    });
-    if ('caches' in window) {
-      caches.keys().then((keys) => {
-        keys.forEach((key) => caches.delete(key));
+// Purge any lingering or rogue service workers and browser cache storages
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const registration of registrations) {
+      registration.unregister().then((success) => {
+        if (success) console.log('[SW 🧹] Unregistered stale service worker:', registration.scope);
       });
     }
+  });
+
+  if ('caches' in window) {
+    caches.keys().then((keys) => {
+      keys.forEach((key) => {
+        caches.delete(key);
+        console.log('[CacheStorage 🧹] Deleted cache bucket:', key);
+      });
+    });
   }
 }
 
