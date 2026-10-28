@@ -6,36 +6,38 @@ let dataChannel = null;
 let candidateQueue = [];
 let isSettingRemote = false;
 
-let cachedIceServers = null;
-
-export async function getIceServers() {
-  if (cachedIceServers) return cachedIceServers;
-  try {
-    const baseUrl = import.meta.env?.VITE_SERVER_URL || '';
-    const res = await fetch(`${baseUrl}/api/webrtc-config`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
-        cachedIceServers = data.iceServers;
-        return cachedIceServers;
-      }
-    }
-  } catch (err) {
-    console.warn('[WebRTC ⚠️] Failed to load backend ICE servers, falling back to STUN:', err);
-  }
-  return [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ];
-}
-
-export const CHUNK_SIZE = 16384; // 16 KB - Safe across all mobile cellular/TURN links
-export const MAX_BUFFER_AMOUNT = 65536; // 64 KB max backpressure ceiling
-
 export const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:global.relay.metered.ca:80',
+    username: '3dc1c2b18b0177646c75916f',
+    credential: 'Rbg/S3hU0+KhOoEq'
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+    username: '3dc1c2b18b0177646c75916f',
+    credential: 'Rbg/S3hU0+KhOoEq'
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:443',
+    username: '3dc1c2b18b0177646c75916f',
+    credential: 'Rbg/S3hU0+KhOoEq'
+  },
+  {
+    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+    username: '3dc1c2b18b0177646c75916f',
+    credential: 'Rbg/S3hU0+KhOoEq'
+  }
 ];
+
+export function getIceServers() {
+  return ICE_SERVERS;
+}
+
+export const CHUNK_SIZE = 16384; // 16 KB safe limit for mobile cellular/TURN
+export const MAX_BUFFER_AMOUNT = 65536; // 64 KB max backpressure ceiling
 
 export function cleanupWebRTC() {
   if (dataChannel) {
@@ -58,10 +60,10 @@ export function cleanupWebRTC() {
   isSettingRemote = false;
 }
 
-export async function initWebRTCSession({ role, socket = defaultSocket, pairingId, onConnected, onMessage, onError }) {
+export async function initWebRTCSession({ role, socket = defaultSocket, pairingId, onConnected, onMessage, onError, onClose }) {
   cleanupWebRTC();
 
-  const iceServers = await getIceServers();
+  const iceServers = getIceServers();
 
   pc = new RTCPeerConnection({
     iceServers,
@@ -92,10 +94,12 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
 
     dataChannel.onerror = (err) => {
       console.error('[WebRTC ❌] DataChannel error:', err);
+      onError?.(err);
     };
 
     dataChannel.onclose = () => {
       console.log('[WebRTC] DataChannel closed');
+      onClose?.();
     };
   }
 
@@ -282,6 +286,9 @@ export class WebRtcSession {
       onError: (err) => {
         this.onError?.(err);
         this.onStateChange?.('failed');
+      },
+      onClose: () => {
+        this.onStateChange?.('data-channel-closed');
       }
     });
     return this.session;

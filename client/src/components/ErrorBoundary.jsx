@@ -1,88 +1,84 @@
 import React from 'react';
 
 export class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
+  state = { hasError: false, error: null };
 
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error, errorInfo) {
-    console.error('[ErrorBoundary ⚠️] Caught unhandled React error:', error, errorInfo);
+  componentDidCatch(error, info) {
+    console.error('[App Crash Caught]:', error, info);
   }
-
-  handleReload = () => {
-    window.location.reload();
-  };
 
   render() {
     if (this.state.hasError) {
       return (
         <div
-          className="error-boundary-screen"
+          className="min-h-screen flex items-center justify-center bg-slate-950 p-6 text-center text-white"
           style={{
             minHeight: '100vh',
             display: 'flex',
-            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '2rem',
-            backgroundColor: '#0a0d14',
-            color: '#f3f4f6',
-            fontFamily: 'Inter, system-ui, sans-serif',
-            textAlign: 'center'
+            backgroundColor: '#020617',
+            padding: '1.5rem',
+            textAlign: 'center',
+            color: '#ffffff'
           }}
         >
           <div
+            className="max-w-md p-6 rounded-2xl bg-slate-900 border border-slate-800"
             style={{
-              maxWidth: '480px',
+              maxWidth: '28rem',
               width: '100%',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              borderRadius: '12px',
-              padding: '2rem',
-              backdropFilter: 'blur(8px)',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+              padding: '1.5rem',
+              borderRadius: '1rem',
+              backgroundColor: '#0f172a',
+              border: '1px solid #1e293b'
             }}
           >
-            <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>⚠️</div>
-            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.25rem', fontWeight: 600 }}>
+            <h2
+              className="text-xl font-bold mb-2 text-rose-400"
+              style={{
+                fontSize: '1.25rem',
+                fontWeight: 700,
+                marginBottom: '0.5rem',
+                color: '#fb7185'
+              }}
+            >
               Something went wrong
             </h2>
             <p
+              className="text-xs text-slate-400 mb-4 font-mono"
               style={{
-                margin: '0 0 1.5rem',
-                color: '#9ca3af',
-                fontSize: '0.875rem',
-                lineHeight: '1.5',
-                wordBreak: 'break-word'
+                fontSize: '0.75rem',
+                color: '#94a3b8',
+                marginBottom: '1rem',
+                fontFamily: 'monospace'
               }}
             >
-              {this.state.error?.message || 'An unexpected error occurred in the application.'}
+              {this.state.error?.message || 'Unexpected error'}
             </p>
             <button
-              onClick={this.handleReload}
+              onClick={() => window.location.reload()}
+              className="px-6 py-2 rounded-xl bg-emerald-500 font-semibold text-slate-950 hover:bg-emerald-400"
               style={{
-                backgroundColor: '#3b82f6',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '0.75rem 1.5rem',
-                fontSize: '0.875rem',
+                padding: '0.5rem 1.5rem',
+                borderRadius: '0.75rem',
+                backgroundColor: '#10b981',
                 fontWeight: 600,
+                color: '#020617',
+                border: 'none',
                 cursor: 'pointer'
               }}
             >
-              Reload Application
+              Reload App
             </button>
           </div>
         </div>
       );
     }
-
     return this.props.children;
   }
 }

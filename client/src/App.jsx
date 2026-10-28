@@ -47,6 +47,7 @@ export default function App() {
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [partnerSocketId, setPartnerSocketId] = useState(null);
   const [roomId, setRoomId] = useState(null);
+  const [isDataChannelReady, setIsDataChannelReady] = useState(false);
 
   const displayCode = verificationCode ? String(verificationCode).padStart(2, '0') : '--';
   const sessionRef = useRef(null);
@@ -121,11 +122,16 @@ export default function App() {
     window.setTimeout(() => setNotice((current) => (current?.message === message ? null : current)), 5500);
   }, []);
 
+  const showNotification = useCallback((message, type = 'info') => {
+    showNotice(type, message);
+  }, [showNotice]);
+
   const closeSession = useCallback((message) => {
     if (connectionTimeoutRef.current) {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
+    setIsDataChannelReady(false);
     pendingSignalsRef.current = [];
     pendingFilesRef.current = null;
     partnerSocketIdRef.current = null;
@@ -410,7 +416,8 @@ export default function App() {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
         }
-        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting connectionState = connected.');
+        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isDataChannelReady = true.');
+        setIsDataChannelReady(true);
         setConnectionState('connected');
         emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
         showNotice('success', `Direct encrypted bridge established with ${targetName}.`);
@@ -429,7 +436,8 @@ export default function App() {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
-          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting connectionState = connected.');
+          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isDataChannelReady = true.');
+          setIsDataChannelReady(true);
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
           showNotice('success', `Direct encrypted bridge established with ${targetName}.`);
@@ -442,6 +450,7 @@ export default function App() {
           }
         } else if (state === 'data-channel-closed') {
           console.log('[WebRTC] DataChannel closed');
+          setIsDataChannelReady(false);
           setConnectionState((current) => current === 'connected' ? 'ready' : current);
         } else if (state === 'failed') {
           if (connectionTimeoutRef.current) {
@@ -449,6 +458,7 @@ export default function App() {
             connectionTimeoutRef.current = null;
           }
           console.warn('[WebRTC] Connection failed');
+          setIsDataChannelReady(false);
           setConnectionState('failed');
           showNotice('error', 'WebRTC connection dropped. Could not traverse network firewalls.');
         } else if (state === 'disconnected') {
@@ -461,6 +471,7 @@ export default function App() {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
         }
+        setIsDataChannelReady(false);
         setConnectionState('failed');
         showNotice('error', error.message || 'WebRTC connection failed.');
       }
@@ -507,6 +518,7 @@ export default function App() {
       setPrompt(null);
       setVerificationCode(null);
       setStep('transfer');
+      setIsDataChannelReady(false);
       setWaitingForAcceptance(false);
       setSelectedPeer({
         ...payload,
@@ -782,12 +794,30 @@ export default function App() {
     }
   };
 
+  const handleFileSelect = (e) => {
+    const selected = Array.from(e.target?.files || (Array.isArray(e) ? e : []));
+    if (selected.length === 0) return;
+
+    if (!isDataChannelReady) {
+      showNotification("Please wait, establishing encrypted P2P link...", "warning");
+      return;
+    }
+
+    handleFiles(selected);
+  };
+
   const handleFiles = async (files) => {
+    const selected = Array.from(files || []);
+    if (selected.length === 0) return;
+
+    if (!isDataChannelReady) {
+      showNotification("Please wait, establishing encrypted P2P link...", "warning");
+      return;
+    }
+
     const dataChannel = sessionRef.current?.getDataChannel?.() || sessionRef.current?.dataChannel;
     if (!dataChannel || dataChannel.readyState !== 'open') {
-      console.log('[App] DataChannel not open yet. Queuing files for transfer once channel opens.');
-      pendingFilesRef.current = files;
-      showNotice('info', 'Connecting to device... transfer will start in a moment');
+      showNotification("Please wait, establishing encrypted P2P link...", "warning");
       return;
     }
 
@@ -943,9 +973,9 @@ export default function App() {
           <span className="status-dot" />
           {connectionState === 'offline'
             ? 'Reconnecting'
-            : connectionState === 'connected'
+            : isDataChannelReady
               ? 'Direct link active'
-              : connectionState === 'connecting'
+              : connectionState === 'connected' || connectionState === 'connecting'
                 ? 'Connecting to device…'
                 : connectionState === 'failed'
                   ? 'Connection failed'
@@ -983,7 +1013,7 @@ export default function App() {
           </section>
         )}
 
-        {connectionState === 'connecting' && (
+        {step !== 'transfer' && connectionState === 'connecting' && (
           <section className="panel connecting-card">
             <div className="connecting-spinner">
               <div className="spinner-orbit" />
@@ -1011,7 +1041,7 @@ export default function App() {
           </section>
         )}
 
-        {!isConnected && connectionState !== 'failed' && connectionState !== 'connecting' && (
+        {step !== 'transfer' && connectionState !== 'failed' && connectionState !== 'connecting' && (
           <section className="pairing-grid">
             <article className="panel my-device-panel">
               <div className="panel-heading">
@@ -1076,20 +1106,43 @@ export default function App() {
           </section>
         )}
 
-        {isConnected && (
+        {step === 'transfer' && connectionState !== 'failed' && (
           <section className="connected-view">
             <div className="connected-header">
               <div>
-                <div className="section-kicker">Secure bridge established</div>
-                <h2>Ready to move files</h2>
-                <p className="muted">Connected directly to <strong>{selectedPeer?.deviceName || 'the other device'}</strong>. The signaling server is no longer involved in your transfer.</p>
+                <div className="section-kicker">
+                  {isDataChannelReady ? 'Secure bridge established' : 'Direct Link Negotiation'}
+                </div>
+                <h2>
+                  {isDataChannelReady
+                    ? 'Ready to move files — Connected directly to peer'
+                    : 'Establishing direct peer-to-peer bridge...'}
+                </h2>
+                <p className="muted">
+                  {isDataChannelReady
+                    ? `Connected directly to ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'the other device'}. The signaling server is no longer involved in your transfer.`
+                    : 'Establishing direct peer-to-peer bridge...'}
+                </p>
+                {!isDataChannelReady && (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.25)' }}>
+                    <div className="pulse-dot" style={{ margin: 0 }} />
+                    <span style={{ fontSize: '12px', color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>
+                      Establishing direct peer-to-peer bridge...
+                    </span>
+                  </div>
+                )}
               </div>
               <button className="button button-secondary" type="button" onClick={() => {
-                emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
+                if (currentPairingIdRef.current) {
+                  emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
+                }
                 closeSession('Connection closed.');
               }}>Disconnect</button>
             </div>
-            <FileDropZone onFiles={handleFiles} disabled={Boolean(transfer && transfer.status === 'Sending')} />
+            <FileDropZone
+              onFiles={handleFiles}
+              disabled={!isDataChannelReady || Boolean(transfer && transfer.status === 'Sending')}
+            />
             <TransferProgress transfer={transfer} onCancel={transfer?.status === 'Sending' ? cancelTransfer : undefined} />
             <div className="transfer-footnote"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
           </section>
@@ -1122,6 +1175,7 @@ export default function App() {
       />
       {scannerOpen && (
         <QRScannerModal
+          isOpen={scannerOpen}
           onResult={handleScanResult}
           onScanSuccess={handleScanResult}
           onClose={() => setScannerOpen(false)}
