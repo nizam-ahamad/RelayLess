@@ -620,16 +620,20 @@ export default function App() {
       }),
       onSocketEvent('session_matched', (data = {}) => {
         const code = data.verificationCode || data.code;
+        console.log('[Socket 🔑] Session matched with code:', code);
+
         setVerificationCode(code);
         setPairingId(data.pairingId);
-        setRole(data.role);
-        setShowConfirmationModal(true);
-        currentPairingIdRef.current = data.pairingId;
+        setRole(data.role); // 'initiator' (host) or 'receiver' (joiner)
         if (data.role) {
           webrtcRoleRef.current = data.role;
         }
+        currentPairingIdRef.current = data.pairingId;
+
+        // Force both host and joiner into the verification step
         setStep('verify');
         setPrompt({ ...data, pairingId: data.pairingId, role: data.role, verificationCode: code, code });
+        setShowConfirmationModal(true);
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
@@ -777,30 +781,38 @@ export default function App() {
     handleJoinWithPin(decoded);
   }, [handleJoinWithPin]);
 
-  const respondToPrompt = (accepted) => {
-    const activePairingId = prompt?.pairingId || pairingId || currentPairingIdRef.current;
-    if (!activePairingId) {
-      return;
+  const handleAllowConnection = useCallback(() => {
+    const activePairingId = pairingId || currentPairingIdRef.current || prompt?.pairingId;
+    console.log('[Confirmation] Allowing connection for pairing:', activePairingId);
+    if (!activePairingId) return;
+    socket.emit('confirm_pairing', { pairingId: activePairingId });
+    emitSocket('confirm_pairing', { pairingId: activePairingId });
+    emitSocket('pairing_response', { pairingId: activePairingId, accepted: true });
+    setWaitingForAcceptance(true);
+  }, [pairingId, prompt]);
+
+  const handleRejectConnection = useCallback(() => {
+    const activePairingId = pairingId || currentPairingIdRef.current || prompt?.pairingId;
+    console.log('[Confirmation] Rejecting connection for pairing:', activePairingId);
+    if (activePairingId) {
+      emitSocket('pairing_response', { pairingId: activePairingId, accepted: false });
+      emitSocket('pairing_cancel', { pairingId: activePairingId });
     }
+    setShowConfirmationModal(false);
+    setWaitingForAcceptance(false);
+    currentPairingIdRef.current = null;
+    setPairingId(null);
+    setPrompt(null);
+    setVerificationCode(null);
+    setStep('idle');
+    setConnectionState('ready');
+  }, [pairingId, prompt]);
+
+  const respondToPrompt = (accepted) => {
     if (accepted) {
-      emitSocket('confirm_pairing', { pairingId: activePairingId });
-      emitSocket('pairing_response', {
-        pairingId: activePairingId,
-        accepted: true
-      });
-      setWaitingForAcceptance(true);
+      handleAllowConnection();
     } else {
-      emitSocket('pairing_response', {
-        pairingId: activePairingId,
-        accepted: false
-      });
-      setShowConfirmationModal(false);
-      currentPairingIdRef.current = null;
-      setPairingId(null);
-      setPrompt(null);
-      setVerificationCode(null);
-      setStep('idle');
-      setConnectionState('ready');
+      handleRejectConnection();
     }
   };
 
@@ -808,8 +820,8 @@ export default function App() {
     const selected = Array.from(e.target?.files || (Array.isArray(e) ? e : []));
     if (selected.length === 0) return;
 
-    if (!isDataChannelReady) {
-      showNotification("Please wait, establishing encrypted P2P link...", "warning");
+    if (!isChannelReady) {
+      showNotification("P2P bridge is still connecting. Please wait a moment...", "warning");
       return;
     }
 
@@ -820,8 +832,8 @@ export default function App() {
     const selected = Array.from(files || []);
     if (selected.length === 0) return;
 
-    if (!isDataChannelReady) {
-      showNotification("Please wait, establishing encrypted P2P link...", "warning");
+    if (!isChannelReady) {
+      showNotification("P2P bridge is still connecting. Please wait a moment...", "warning");
       return;
     }
 
@@ -1125,19 +1137,19 @@ export default function App() {
                 </div>
                 <h2>
                   {isChannelReady
-                    ? 'Ready to move files'
-                    : 'Connecting encrypted P2P bridge...'}
+                    ? 'Ready to move files — Connected directly to peer'
+                    : 'Connecting encrypted peer-to-peer bridge...'}
                 </h2>
                 <p className="muted">
                   {isChannelReady
                     ? `Connected directly to ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'the other device'}. The signaling server is no longer involved in your transfer.`
-                    : 'Connecting encrypted P2P bridge...'}
+                    : 'Connecting encrypted peer-to-peer bridge...'}
                 </p>
                 {!isChannelReady && (
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.25)' }}>
                     <div className="pulse-dot" style={{ margin: 0 }} />
                     <span style={{ fontSize: '12px', color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>
-                      Connecting encrypted P2P bridge...
+                      Connecting encrypted peer-to-peer bridge...
                     </span>
                   </div>
                 )}
@@ -1166,17 +1178,17 @@ export default function App() {
       </main>
 
       <ConfirmationModal
-        isOpen={showConfirmationModal}
-        prompt={prompt}
+        isOpen={showConfirmationModal || step === 'verify'}
         code={verificationCode}
         verificationCode={verificationCode}
         rawCode={verificationCode}
         displayCode={displayCode}
+        prompt={prompt}
         hasAccepted={waitingForAcceptance}
-        onConfirm={() => respondToPrompt(true)}
-        onAccept={() => respondToPrompt(true)}
-        onClose={() => respondToPrompt(false)}
-        onReject={() => respondToPrompt(false)}
+        onConfirm={handleAllowConnection}
+        onAccept={handleAllowConnection}
+        onClose={handleRejectConnection}
+        onReject={handleRejectConnection}
       />
       <IncomingFileModal
         transfer={incomingTransfer}

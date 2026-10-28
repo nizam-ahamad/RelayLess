@@ -17,6 +17,8 @@ export default function ConfirmationModal({
     return null;
   }
 
+  const isExplicitlyOpen = Boolean(isOpen || show);
+
   const activeCode =
     code ||
     verificationCode ||
@@ -26,7 +28,7 @@ export default function ConfirmationModal({
     prompt?.confirmationCode ||
     prompt?.code;
 
-  if (isOpen === undefined && show === undefined && !activeCode && !prompt) {
+  if (!isExplicitlyOpen && !activeCode && !prompt) {
     return null;
   }
 
@@ -37,7 +39,7 @@ export default function ConfirmationModal({
   const handleReject = onReject || onClose;
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <div className="modal-backdrop" role="presentation" style={{ position: 'fixed', inset: 0, zIndex: 100 }}>
       <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="pairing-title">
         <div className="modal-eyebrow">Mutual confirmation</div>
         <h2 id="pairing-title">Connect {otherDevice}?</h2>
