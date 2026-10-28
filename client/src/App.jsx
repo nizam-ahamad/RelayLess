@@ -7,7 +7,7 @@ import IncomingFileModal from './components/IncomingFileModal.jsx';
 import FileDropZone from './components/FileDropZone.jsx';
 import TransferProgress from './components/TransferProgress.jsx';
 import { connectSocket, disconnectSocket, emitSocket, onSocketEvent, socket } from './services/socket.js';
-import { WebRtcSession } from './services/webrtc.js';
+import { WebRtcSession, cleanupWebRTC } from './services/webrtc.js';
 import { createFileReceiver } from './services/fileReceiver.js';
 import { sendFile } from './services/fileSender.js';
 import { sanitizeFileName } from './utils/sanitize.js';
@@ -26,22 +26,25 @@ const DEFAULT_DEVICE_NAME = 'My device';
 
 export default function App() {
   const [peer, setPeer] = useState(null);
-  const [connectionState, setConnectionState] = useState('connecting');
-  const [deviceName, setDeviceName] = useState(() => localStorage.getItem('p2p-device-name') || DEFAULT_DEVICE_NAME);
+  const [connectionState, setConnectionState] = useState('disconnected');
+  const [deviceName, setDeviceName] = useState(DEFAULT_DEVICE_NAME);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState(false);
   const [pinSeconds, setPinSeconds] = useState(120);
   const [prompt, setPrompt] = useState(null);
+  const [pairingId, setPairingId] = useState(null);
   const [verificationCode, setVerificationCode] = useState(null);
-  const [step, setStep] = useState(null);
+  const [webrtcRole, setWebrtcRole] = useState(null);
+  const [step, setStep] = useState('idle');
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [transfer, setTransfer] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [transferProgress, setTransferProgress] = useState(0);
   const [incomingTransfer, setIncomingTransfer] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [partnerSocketId, setPartnerSocketId] = useState(null);
-  const [webrtcRole, setWebrtcRole] = useState(null);
   const [roomId, setRoomId] = useState(null);
 
   const displayCode = verificationCode ? String(verificationCode).padStart(2, '0') : '--';
@@ -66,6 +69,41 @@ export default function App() {
   const handleFilesRef = useRef(null);
   const pairPeerId = useMemo(() => new URLSearchParams(window.location.search).get('pair'), []);
   const autoPairRequestedRef = useRef(false);
+
+  useEffect(() => {
+    // Purge any stored session keys on fresh boot
+    ['pairingId', 'relayless_session', 'webrtc_role', 'pin', 'p2p-device-name'].forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+        sessionStorage.removeItem(k);
+      } catch {}
+    });
+
+    // Strip URL query parameters (e.g. ?pin=...) without triggering a reload
+    if (window.location.search || window.location.hash) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const activePairingId = pairingId || currentPairingIdRef.current;
+      if (activePairingId) {
+        emitSocket('cancel_session', { pairingId: activePairingId });
+        emitSocket('pairing_cancel', { pairingId: activePairingId });
+      }
+      try {
+        sessionRef.current?.close();
+      } catch {}
+      cleanupWebRTC();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      handleBeforeUnload();
+    };
+  }, [pairingId]);
 
   const pairingUrl = useMemo(() => {
     if (!peer?.peerId) {
@@ -104,12 +142,16 @@ export default function App() {
     transferAbortRef.current?.abort();
     transferAbortRef.current = null;
     currentPairingIdRef.current = null;
+    setPairingId(null);
     setSelectedPeer(null);
     setTransfer(null);
+    setFiles([]);
+    setTransferProgress(0);
     setIncomingTransfer(null);
     setPrompt(null);
     setVerificationCode(null);
-    setStep(null);
+    setWebrtcRole(null);
+    setStep('idle');
     setWaitingForAcceptance(false);
     setConnectionState('ready');
     if (message) {
@@ -238,6 +280,7 @@ export default function App() {
         URL.revokeObjectURL(blobUrl);
       }, 10000);
 
+      setTransferProgress(100);
       setTransfer((current) => ({
         ...(current || {}),
         fileName,
@@ -280,6 +323,7 @@ export default function App() {
           saved: false
         };
 
+        setTransferProgress(0);
         setTransfer({
           fileName,
           fileSize: totalExpectedBytes,
@@ -311,6 +355,8 @@ export default function App() {
           saved: false
         };
         setTransfer(null);
+        setFiles([]);
+        setTransferProgress(0);
         showNotice('info', 'The other device cancelled the transfer.');
         return;
       }
@@ -348,6 +394,7 @@ export default function App() {
       ? Math.min(100, (receivedBytes / totalExpectedBytes) * 100) 
       : 100;
 
+    setTransferProgress(Math.round(percent));
     setTransfer((current) => ({
       ...(current || {}),
       fileName: incoming.metadata?.fileName || 'Incoming file',
@@ -463,6 +510,7 @@ export default function App() {
       console.log(`[Signaling] Confirmed pairing ${pairingId}. Role: ${role}, Partner: ${partnerName}`);
 
       currentPairingIdRef.current = pairingId;
+      setPairingId(pairingId);
       partnerSocketIdRef.current = targetSocketId;
       setPartnerSocketId(targetSocketId);
       webrtcRoleRef.current = role;
@@ -523,7 +571,6 @@ export default function App() {
   showNoticeRef.current = showNotice;
 
   useEffect(() => {
-    localStorage.setItem('p2p-device-name', deviceName);
     setPeer((current) => current ? { ...current, deviceName } : current);
     emitSocket('set_device_name', { deviceName });
   }, [deviceName]);
@@ -540,10 +587,10 @@ export default function App() {
   useEffect(() => {
     const socket = connectSocket();
     if (socket.connected) {
-      setConnectionState((current) => current === 'connecting' ? 'ready' : current);
+      setConnectionState((current) => current === 'connecting' || current === 'disconnected' ? 'ready' : current);
     }
     const cleanups = [
-      onSocketEvent('connect', () => setConnectionState((current) => current === 'connecting' ? 'ready' : current)),
+      onSocketEvent('connect', () => setConnectionState((current) => current === 'connecting' || current === 'disconnected' ? 'ready' : current)),
       onSocketEvent('disconnect', () => {
         setConnectionState('offline');
         showNoticeRef.current('error', 'Signaling server disconnected. Retrying automatically…');
@@ -552,7 +599,7 @@ export default function App() {
       onSocketEvent('peer_ready', (nextPeer) => {
         setPeer(nextPeer);
         setPinSeconds(nextPeer.expiresIn ?? 120);
-        setConnectionState((current) => (current === 'connecting' && !currentPairingIdRef.current) || current === 'offline' ? 'ready' : current);
+        setConnectionState((current) => (current === 'connecting' || current === 'disconnected') && !currentPairingIdRef.current || current === 'offline' ? 'ready' : current);
       }),
       onSocketEvent('update_pin', (nextPin) => {
         setPeer((current) => ({ ...(current || {}), ...nextPin }));
@@ -560,22 +607,29 @@ export default function App() {
       }),
       onSocketEvent('session_matched', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
         const code = vCode ?? cCode;
+        const pId = payload.pairingId || payload.id;
+        currentPairingIdRef.current = pId;
+        setPairingId(pId);
         setVerificationCode(code);
         setStep('verify');
-        setPrompt({ ...payload, verificationCode: code, confirmationCode: code });
+        setPrompt({ ...payload, pairingId: pId, verificationCode: code, confirmationCode: code });
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
       onSocketEvent('paired', ({ verificationCode: vCode, confirmationCode: cCode, ...payload } = {}) => {
         const code = vCode ?? cCode;
+        const pId = payload.pairingId || payload.id;
+        currentPairingIdRef.current = pId;
+        setPairingId(pId);
         setVerificationCode(code);
         setStep('verify');
-        setPrompt({ ...payload, verificationCode: code, confirmationCode: code });
+        setPrompt({ ...payload, pairingId: pId, verificationCode: code, confirmationCode: code });
         setWaitingForAcceptance(false);
         setConnectionState('pairing');
       }),
       onSocketEvent('pairing_prompt', (nextPrompt) => {
         currentPairingIdRef.current = nextPrompt.pairingId;
+        setPairingId(nextPrompt.pairingId);
         const code = nextPrompt.verificationCode ?? nextPrompt.confirmationCode;
         setVerificationCode(code);
         setStep('verify');
@@ -692,9 +746,11 @@ export default function App() {
       accepted
     });
     if (!accepted) {
+      currentPairingIdRef.current = null;
+      setPairingId(null);
       setPrompt(null);
       setVerificationCode(null);
-      setStep(null);
+      setStep('idle');
       setConnectionState('ready');
     } else {
       setWaitingForAcceptance(true);
@@ -709,6 +765,9 @@ export default function App() {
       showNotice('info', 'Connecting to device... transfer will start in a moment');
       return;
     }
+
+    setFiles(Array.from(files || []));
+    setTransferProgress(0);
 
     const CHUNK_SIZE = 64 * 1024;
     for (const file of files) {
@@ -788,12 +847,14 @@ export default function App() {
           if (now - lastReportedAt >= 150 || offset === file.size) {
             const elapsedSeconds = Math.max((now - lastReportedAt) / 1000, 0.001);
             const speed = (offset - lastReportedBytes) / elapsedSeconds;
+            const currentPercent = file.size === 0 ? 100 : (offset / file.size) * 100;
+            setTransferProgress(Math.round(currentPercent));
             setTransfer((current) => ({
               ...(current || {}),
               fileName: file.name,
               fileSize: file.size,
               bytesTransferred: offset,
-              percent: file.size === 0 ? 100 : (offset / file.size) * 100,
+              percent: currentPercent,
               speed,
               direction: 'sending',
               status: 'Sending'
@@ -819,6 +880,7 @@ export default function App() {
           fileName: file.name
         }));
 
+        setTransferProgress(100);
         setTransfer((current) => ({
           ...(current || {}),
           bytesTransferred: file.size,
@@ -844,6 +906,8 @@ export default function App() {
     transferAbortRef.current?.abort();
     transferAbortRef.current = null;
     setTransfer(null);
+    setFiles([]);
+    setTransferProgress(0);
   };
 
   const rotateProgress = Math.max(0, Math.min(100, (pinSeconds / 120) * 100));
