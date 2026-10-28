@@ -29,6 +29,9 @@ export async function getIceServers() {
   ];
 }
 
+export const CHUNK_SIZE = 16384; // 16 KB - Safe across all mobile cellular/TURN links
+export const MAX_BUFFER_AMOUNT = 65536; // 64 KB max backpressure ceiling
+
 export const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' }
@@ -69,8 +72,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     if (!channel) return;
     channel.binaryType = 'arraybuffer';
     dataChannel = channel;
-    // 1 MB backpressure threshold for smooth multi-GB streaming
-    dataChannel.bufferedAmountLowThreshold = 1024 * 1024;
+    channel.bufferedAmountLowThreshold = 32768; // 32 KB threshold
 
     if (dataChannel.readyState === 'open') {
       dataChannel.binaryType = 'arraybuffer';
@@ -248,6 +250,10 @@ export class WebRtcSession {
   }
 
   get dataChannel() {
+    return dataChannel;
+  }
+
+  getDataChannel() {
     return dataChannel;
   }
 

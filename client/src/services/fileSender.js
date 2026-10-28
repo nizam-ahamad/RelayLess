@@ -1,5 +1,5 @@
-export const CHUNK_SIZE = 64 * 1024;
-export const LOW_WATERMARK = 512 * 1024;
+export const CHUNK_SIZE = 16 * 1024; // 16 KB - Safe across mobile SCTP links
+export const LOW_WATERMARK = 64 * 1024; // 64 KB backpressure ceiling
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
 
