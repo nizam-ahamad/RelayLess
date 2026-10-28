@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 
-export default function QRScannerModal({ isOpen = true, onClose, onScanSuccess, onResult }) {
+export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResult }) {
   const scannerRef = useRef(null);
   const isStoppingRef = useRef(false);
 
@@ -9,7 +9,8 @@ export default function QRScannerModal({ isOpen = true, onClose, onScanSuccess, 
     if (!isOpen) return;
 
     isStoppingRef.current = false;
-    const html5QrCode = new Html5Qrcode("reader");
+    const scannerId = "reader";
+    const html5QrCode = new Html5Qrcode(scannerId);
     scannerRef.current = html5QrCode;
 
     const config = { fps: 10, qrbox: { width: 250, height: 250 } };
@@ -21,39 +22,46 @@ export default function QRScannerModal({ isOpen = true, onClose, onScanSuccess, 
         if (isStoppingRef.current) return;
         isStoppingRef.current = true;
 
-        // Safely extract 6-character alphanumeric PIN
+        // Parse 6-character PIN safely
         const match = decodedText.match(/(?:pin=|^)([A-Z0-9]{6})/i);
         const pin = match ? match[1].toUpperCase() : decodedText.trim().toUpperCase();
 
         try {
+          // Explicitly stop hardware stream tracks
+          const video = document.querySelector('#reader video');
+          if (video && video.srcObject) {
+            video.srcObject.getTracks().forEach(t => t.stop());
+          }
           if (html5QrCode.isScanning) {
             await html5QrCode.stop();
           }
           html5QrCode.clear();
         } catch (err) {
-          // Suppress harmless stop warnings on unmount
+          // Ignore harmless stop warnings on unmount
         } finally {
           scannerRef.current = null;
         }
 
-        if (onClose) {
+        // Defer UI update slightly so DOM unmount occurs after camera release
+        setTimeout(() => {
           onClose();
-        }
-        if (onScanSuccess) {
-          onScanSuccess(pin);
-        } else if (onResult) {
-          onResult(pin);
-        }
+          if (onScanSuccess) onScanSuccess(pin);
+          else if (onResult) onResult(pin);
+        }, 50);
       },
-      () => {} // Ignore scan frame misses
+      () => {}
     ).catch((err) => {
-      console.warn('[Scanner] Camera start error:', err);
+      console.warn('[Scanner] Camera start failed:', err);
     });
 
     return () => {
       if (scannerRef.current && !isStoppingRef.current) {
         isStoppingRef.current = true;
         try {
+          const video = document.querySelector('#reader video');
+          if (video && video.srcObject) {
+            video.srcObject.getTracks().forEach(t => t.stop());
+          }
           if (scannerRef.current.isScanning) {
             scannerRef.current.stop().catch(() => {}).finally(() => {
               try { scannerRef.current?.clear(); } catch(e) {}
@@ -109,13 +117,11 @@ export default function QRScannerModal({ isOpen = true, onClose, onScanSuccess, 
         >
           Point your camera at the other screen
         </p>
-        
         <div
           id="reader"
           className="w-full overflow-hidden rounded-xl bg-black min-h-[260px]"
           style={{ width: '100%', overflow: 'hidden', borderRadius: '12px', backgroundColor: '#000', minHeight: '260px' }}
         ></div>
-
         <button
           onClick={onClose}
           className="mt-4 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium text-slate-300 transition-colors button button-secondary"

@@ -6,7 +6,7 @@ let dataChannel = null;
 let candidateQueue = [];
 let isSettingRemote = false;
 
-export const ICE_SERVERS = [
+export const STATIC_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.relay.metered.ca:80' },
@@ -32,8 +32,10 @@ export const ICE_SERVERS = [
   }
 ];
 
+export const ICE_SERVERS = STATIC_ICE_SERVERS;
+
 export function getIceServers() {
-  return ICE_SERVERS;
+  return STATIC_ICE_SERVERS;
 }
 
 export const CHUNK_SIZE = 16384; // 16 KB safe limit for mobile cellular/TURN
@@ -63,10 +65,8 @@ export function cleanupWebRTC() {
 export async function initWebRTCSession({ role, socket = defaultSocket, pairingId, onConnected, onMessage, onError, onClose }) {
   cleanupWebRTC();
 
-  const iceServers = getIceServers();
-
   pc = new RTCPeerConnection({
-    iceServers,
+    iceServers: getIceServers(),
     iceCandidatePoolSize: 2
   });
 
@@ -136,6 +136,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     pc.ondatachannel = (event) => {
       console.log('[WebRTC 📥] Received remote DataChannel');
       event.channel.binaryType = 'arraybuffer';
+      event.channel.bufferedAmountLowThreshold = 32768;
       setupDataChannel(event.channel);
     };
   }
@@ -145,6 +146,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     console.log('[WebRTC 🛠️] Initiator creating DataChannel');
     const channel = pc.createDataChannel('fileTransfer', { ordered: true });
     channel.binaryType = 'arraybuffer';
+    channel.bufferedAmountLowThreshold = 32768;
     setupDataChannel(channel);
 
     try {

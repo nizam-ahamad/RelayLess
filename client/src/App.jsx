@@ -47,7 +47,9 @@ export default function App() {
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [partnerSocketId, setPartnerSocketId] = useState(null);
   const [roomId, setRoomId] = useState(null);
-  const [isDataChannelReady, setIsDataChannelReady] = useState(false);
+  const [isChannelOpen, setIsChannelOpen] = useState(false);
+  const isDataChannelReady = isChannelOpen;
+  const setIsDataChannelReady = setIsChannelOpen;
 
   const displayCode = verificationCode ? String(verificationCode).padStart(2, '0') : '--';
   const sessionRef = useRef(null);
@@ -131,6 +133,7 @@ export default function App() {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
+    setIsChannelOpen(false);
     setIsDataChannelReady(false);
     pendingSignalsRef.current = [];
     pendingFilesRef.current = null;
@@ -363,6 +366,8 @@ export default function App() {
     let buffer = data;
     if (buffer instanceof Blob) {
       buffer = await buffer.arrayBuffer();
+    } else if (buffer && typeof buffer.arrayBuffer === 'function') {
+      buffer = await buffer.arrayBuffer();
     } else if (ArrayBuffer.isView(buffer)) {
       buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     }
@@ -400,6 +405,8 @@ export default function App() {
     }
   }, [saveIncomingFile, showNotice]);
 
+  const handleDataChannelMessage = handleChannelMessage;
+
   const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId, partnerName }) => {
     sessionRef.current?.close();
     console.log(`[WebRTC] Starting WebRtcSession. Role: ${role}, Pairing: ${pairingId}`);
@@ -409,15 +416,15 @@ export default function App() {
       socket,
       pairingId: pairingId || currentPairingIdRef.current,
       partnerSocketId: partnerSocketId || partnerSocketIdRef.current,
-      onMessage: handleChannelMessage,
+      onMessage: handleDataChannelMessage,
       onSignal: sendSignal,
       onConnected: () => {
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
         }
-        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isDataChannelReady = true.');
-        setIsDataChannelReady(true);
+        console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isChannelOpen = true.');
+        setIsChannelOpen(true);
         setConnectionState('connected');
         emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
         showNotice('success', `Direct encrypted bridge established with ${targetName}.`);
@@ -436,8 +443,8 @@ export default function App() {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
-          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isDataChannelReady = true.');
-          setIsDataChannelReady(true);
+          console.log('[WebRTC] ⚡ DataChannel OPENED! Setting isChannelOpen = true.');
+          setIsChannelOpen(true);
           setConnectionState('connected');
           emitSocket('webrtc_ready', { pairingId: pairingId || currentPairingIdRef.current });
           showNotice('success', `Direct encrypted bridge established with ${targetName}.`);
@@ -450,7 +457,7 @@ export default function App() {
           }
         } else if (state === 'data-channel-closed') {
           console.log('[WebRTC] DataChannel closed');
-          setIsDataChannelReady(false);
+          setIsChannelOpen(false);
           setConnectionState((current) => current === 'connected' ? 'ready' : current);
         } else if (state === 'failed') {
           if (connectionTimeoutRef.current) {
@@ -458,7 +465,7 @@ export default function App() {
             connectionTimeoutRef.current = null;
           }
           console.warn('[WebRTC] Connection failed');
-          setIsDataChannelReady(false);
+          setIsChannelOpen(false);
           setConnectionState('failed');
           showNotice('error', 'WebRTC connection dropped. Could not traverse network firewalls.');
         } else if (state === 'disconnected') {
@@ -471,7 +478,7 @@ export default function App() {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
         }
-        setIsDataChannelReady(false);
+        setIsChannelOpen(false);
         setConnectionState('failed');
         showNotice('error', error.message || 'WebRTC connection failed.');
       }
@@ -518,6 +525,7 @@ export default function App() {
       setPrompt(null);
       setVerificationCode(null);
       setStep('transfer');
+      setIsChannelOpen(false);
       setIsDataChannelReady(false);
       setWaitingForAcceptance(false);
       setSelectedPeer({
@@ -1111,23 +1119,23 @@ export default function App() {
             <div className="connected-header">
               <div>
                 <div className="section-kicker">
-                  {isDataChannelReady ? 'Secure bridge established' : 'Direct Link Negotiation'}
+                  {isChannelOpen ? 'Secure bridge established' : 'Direct Link Negotiation'}
                 </div>
                 <h2>
-                  {isDataChannelReady
+                  {isChannelOpen
                     ? 'Ready to move files — Connected directly to peer'
-                    : 'Establishing direct peer-to-peer bridge...'}
+                    : 'Establishing encrypted peer-to-peer bridge...'}
                 </h2>
                 <p className="muted">
-                  {isDataChannelReady
+                  {isChannelOpen
                     ? `Connected directly to ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'the other device'}. The signaling server is no longer involved in your transfer.`
-                    : 'Establishing direct peer-to-peer bridge...'}
+                    : 'Establishing encrypted peer-to-peer bridge...'}
                 </p>
-                {!isDataChannelReady && (
+                {!isChannelOpen && (
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.25)' }}>
                     <div className="pulse-dot" style={{ margin: 0 }} />
                     <span style={{ fontSize: '12px', color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>
-                      Establishing direct peer-to-peer bridge...
+                      Establishing encrypted peer-to-peer bridge...
                     </span>
                   </div>
                 )}
@@ -1141,7 +1149,7 @@ export default function App() {
             </div>
             <FileDropZone
               onFiles={handleFiles}
-              disabled={!isDataChannelReady || Boolean(transfer && transfer.status === 'Sending')}
+              disabled={!isChannelOpen || Boolean(transfer && transfer.status === 'Sending')}
             />
             <TransferProgress transfer={transfer} onCancel={transfer?.status === 'Sending' ? cancelTransfer : undefined} />
             <div className="transfer-footnote"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
