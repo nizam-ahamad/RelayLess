@@ -66,15 +66,19 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
   });
 
   function setupDataChannel(channel) {
+    if (!channel) return;
+    channel.binaryType = 'arraybuffer';
     dataChannel = channel;
     // 1 MB backpressure threshold for smooth multi-GB streaming
     dataChannel.bufferedAmountLowThreshold = 1024 * 1024;
 
     if (dataChannel.readyState === 'open') {
+      dataChannel.binaryType = 'arraybuffer';
       console.log('[WebRTC ⚡] DataChannel already open');
       onConnected?.();
     } else {
       dataChannel.onopen = () => {
+        dataChannel.binaryType = 'arraybuffer';
         console.log('[WebRTC 🎉] DataChannel opened successfully');
         onConnected?.();
       };
@@ -125,6 +129,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
   if (role === 'receiver') {
     pc.ondatachannel = (event) => {
       console.log('[WebRTC 📥] Received remote DataChannel');
+      event.channel.binaryType = 'arraybuffer';
       setupDataChannel(event.channel);
     };
   }
@@ -133,6 +138,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
   if (role === 'initiator') {
     console.log('[WebRTC 🛠️] Initiator creating DataChannel');
     const channel = pc.createDataChannel('fileTransfer', { ordered: true });
+    channel.binaryType = 'arraybuffer';
     setupDataChannel(channel);
 
     try {

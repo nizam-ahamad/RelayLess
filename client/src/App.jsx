@@ -11,6 +11,16 @@ import { WebRtcSession } from './services/webrtc.js';
 import { createFileReceiver } from './services/fileReceiver.js';
 import { sendFile } from './services/fileSender.js';
 import { sanitizeFileName } from './utils/sanitize.js';
+import { formatBytes } from './utils/format.js';
+
+function readSliceAsArrayBuffer(slice) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsArrayBuffer(slice);
+  });
+}
 
 const DEFAULT_DEVICE_NAME = 'My device';
 
@@ -35,6 +45,13 @@ export default function App() {
   const transferAbortRef = useRef(null);
   const receiverRef = useRef(null);
   const incomingTransferRef = useRef(null);
+  const incomingFileRef = useRef({
+    metadata: null,
+    totalExpectedBytes: 0,
+    receivedBytes: 0,
+    chunks: [],
+    saved: false
+  });
   const currentPairingIdRef = useRef(null);
   const roomIdRef = useRef(null);
   const connectionTimeoutRef = useRef(null);
@@ -188,7 +205,52 @@ export default function App() {
     }
   }, [showNotice]);
 
+  const saveIncomingFile = useCallback(() => {
+    const incoming = incomingFileRef.current;
+    if (!incoming || !incoming.metadata || incoming.saved) {
+      return;
+    }
+    incoming.saved = true;
+
+    const fileName = incoming.metadata.fileName || 'download';
+    const fileType = incoming.metadata.fileType || 'application/octet-stream';
+    const totalBytes = incoming.receivedBytes;
+
+    console.log(`[Transfer] Complete! Assembling ${incoming.chunks.length} chunks (${totalBytes} bytes) for ${fileName}`);
+
+    try {
+      const blob = new Blob(incoming.chunks, { type: fileType });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      }, 10000);
+
+      setTransfer((current) => ({
+        ...(current || {}),
+        fileName,
+        fileSize: totalBytes,
+        bytesTransferred: totalBytes,
+        percent: 100,
+        direction: 'receiving',
+        status: 'Complete'
+      }));
+
+      showNotice('success', `${fileName} (${formatBytes(totalBytes)}) downloaded successfully.`);
+    } catch (err) {
+      console.error('[Transfer] Failed to assemble or download file:', err);
+      showNotice('error', `Failed to save ${fileName}: ${err.message}`);
+    }
+  }, [showNotice]);
+
   const handleChannelMessage = useCallback(async (data) => {
+    // 1. Distinguish between metadata messages (JSON strings) and actual binary chunks (ArrayBuffer)
     if (typeof data === 'string') {
       let packet;
       try {
@@ -198,45 +260,103 @@ export default function App() {
       }
 
       if (packet.type === 'METADATA') {
-        packet.fileName = sanitizeFileName(packet.fileName);
-        const receiver = await new Promise((resolve) => {
-          const pending = { metadata: packet, resolve };
-          incomingTransferRef.current = pending;
-          setIncomingTransfer(packet);
+        const fileName = sanitizeFileName(packet.fileName || packet.name || 'received-file');
+        const totalExpectedBytes = Number(packet.fileSize ?? packet.size ?? 0);
+        const fileType = packet.fileType || 'application/octet-stream';
+
+        console.log('[Transfer] Received METADATA:', fileName, totalExpectedBytes, 'bytes');
+
+        incomingFileRef.current = {
+          metadata: { ...packet, fileName, fileSize: totalExpectedBytes, fileType },
+          totalExpectedBytes,
+          receivedBytes: 0,
+          chunks: [],
+          saved: false
+        };
+
+        setTransfer({
+          fileName,
+          fileSize: totalExpectedBytes,
+          bytesTransferred: 0,
+          percent: 0,
+          direction: 'receiving',
+          status: 'Receiving'
         });
-        if (!receiver) {
-          try {
-            sessionRef.current?.send(JSON.stringify({ type: 'CANCEL', transferId: packet.transferId }));
-          } catch {
-            // The peer may have disconnected while the save prompt was open.
-          }
+
+        // If file is 0 bytes, complete immediately
+        if (totalExpectedBytes === 0) {
+          saveIncomingFile();
         }
         return;
       }
 
-      if (packet.type === 'COMPLETE' && receiverRef.current) {
-        await receiverRef.current.complete();
-        receiverRef.current = null;
+      if (packet.type === 'eof' || packet.type === 'COMPLETE') {
+        console.log(`[Transfer] Received ${packet.type} message from sender`);
+        saveIncomingFile();
         return;
       }
 
       if (packet.type === 'CANCEL') {
-        await receiverRef.current?.cancel?.();
-        receiverRef.current = null;
+        incomingFileRef.current = {
+          metadata: null,
+          totalExpectedBytes: 0,
+          receivedBytes: 0,
+          chunks: [],
+          saved: false
+        };
         setTransfer(null);
         showNotice('info', 'The other device cancelled the transfer.');
+        return;
       }
       return;
     }
 
-    if (receiverRef.current) {
-      try {
-        await receiverRef.current.write(data);
-      } catch (error) {
-        showNotice('error', error.message || 'The file could not be written to disk.');
-      }
+    // 2. Binary chunk reception (ArrayBuffer or binary chunk)
+    let chunkBuffer;
+    if (data instanceof ArrayBuffer) {
+      chunkBuffer = data;
+    } else if (ArrayBuffer.isView(data)) {
+      chunkBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    } else if (data instanceof Blob) {
+      chunkBuffer = await data.arrayBuffer();
+    } else {
+      console.warn('[Transfer] Unexpected binary chunk type:', data);
+      return;
     }
-  }, [showNotice]);
+
+    const incoming = incomingFileRef.current;
+    if (!incoming || !incoming.metadata) {
+      console.warn('[Transfer] Received binary chunk before metadata');
+      return;
+    }
+
+    incoming.chunks.push(chunkBuffer);
+    incoming.receivedBytes += chunkBuffer.byteLength;
+
+    const receivedBytes = incoming.receivedBytes;
+    const totalExpectedBytes = incoming.totalExpectedBytes;
+
+    console.log('[Transfer] Received bytes:', receivedBytes, '/', totalExpectedBytes);
+
+    const percent = totalExpectedBytes > 0 
+      ? Math.min(100, (receivedBytes / totalExpectedBytes) * 100) 
+      : 100;
+
+    setTransfer((current) => ({
+      ...(current || {}),
+      fileName: incoming.metadata?.fileName || 'Incoming file',
+      fileSize: totalExpectedBytes,
+      bytesTransferred: receivedBytes,
+      percent,
+      direction: 'receiving',
+      status: 'Receiving'
+    }));
+
+    // Do NOT trigger file download/save until receivedBytes >= totalSize (or an explicit { type: 'eof' } message is received).
+    if (totalExpectedBytes > 0 && receivedBytes >= totalExpectedBytes) {
+      saveIncomingFile();
+    }
+  }, [saveIncomingFile, showNotice]);
 
   const startWebRtc = useCallback(async ({ role, pairingId, partnerSocketId, partnerName }) => {
     sessionRef.current?.close();
@@ -554,9 +674,13 @@ export default function App() {
       return;
     }
 
+    const CHUNK_SIZE = 64 * 1024;
     for (const file of files) {
       const abortController = new AbortController();
       transferAbortRef.current = abortController;
+      const transferId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
       setTransfer({
         fileName: file.name,
         fileSize: file.size,
@@ -567,28 +691,105 @@ export default function App() {
       });
 
       try {
-        await sendFile({
-          file,
-          dataChannel: channel,
-          signal: abortController.signal,
-          onProgress: (progress) => setTransfer((current) => ({
-            ...(current || {}),
-            fileName: file.name,
-            fileSize: file.size,
-            bytesTransferred: progress.bytesSent,
-            percent: progress.percent,
-            speed: progress.speed,
-            direction: 'sending',
-            status: 'Sending'
-          })),
-          onComplete: () => setTransfer((current) => ({
-            ...(current || {}),
-            bytesTransferred: file.size,
-            percent: 100,
-            direction: 'sending',
-            status: 'Complete'
-          }))
-        });
+        const metadata = {
+          type: 'METADATA',
+          transferId,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || 'application/octet-stream',
+          chunkSize: CHUNK_SIZE,
+          totalChunks
+        };
+
+        sessionRef.current?.send(JSON.stringify(metadata));
+
+        let offset = 0;
+        let chunkIndex = 0;
+        let lastReportedAt = performance.now();
+        let lastReportedBytes = 0;
+
+        while (offset < file.size) {
+          if (abortController.signal.aborted) {
+            sessionRef.current?.send(JSON.stringify({ type: 'CANCEL', transferId }));
+            throw new DOMException('The transfer was cancelled.', 'AbortError');
+          }
+
+          // Check that sendChunk() actually transmits each binary slice and waits for backpressure
+          const activeChannel = sessionRef.current?.dataChannel || channel;
+          const lowThreshold = activeChannel?.bufferedAmountLowThreshold || (256 * 1024);
+          while (activeChannel && activeChannel.bufferedAmount > lowThreshold) {
+            await new Promise((resolve) => {
+              const onLow = () => {
+                activeChannel.removeEventListener('bufferedamountlow', onLow);
+                resolve();
+              };
+              activeChannel.addEventListener('bufferedamountlow', onLow, { once: true });
+              if (activeChannel.bufferedAmount <= lowThreshold) {
+                activeChannel.removeEventListener('bufferedamountlow', onLow);
+                resolve();
+              }
+            });
+          }
+
+          const slice = file.slice(offset, Math.min(offset + CHUNK_SIZE, file.size));
+          const chunkBuffer = await readSliceAsArrayBuffer(slice);
+
+          if (abortController.signal.aborted) {
+            sessionRef.current?.send(JSON.stringify({ type: 'CANCEL', transferId }));
+            throw new DOMException('The transfer was cancelled.', 'AbortError');
+          }
+
+          console.log('[Transfer] Sending chunk:', offset, '/', file.size);
+          const sent = sessionRef.current?.sendChunk(chunkBuffer);
+          if (!sent && activeChannel && activeChannel.readyState === 'open') {
+            activeChannel.send(chunkBuffer);
+          }
+
+          offset += chunkBuffer.byteLength;
+          chunkIndex += 1;
+
+          const now = performance.now();
+          if (now - lastReportedAt >= 150 || offset === file.size) {
+            const elapsedSeconds = Math.max((now - lastReportedAt) / 1000, 0.001);
+            const speed = (offset - lastReportedBytes) / elapsedSeconds;
+            setTransfer((current) => ({
+              ...(current || {}),
+              fileName: file.name,
+              fileSize: file.size,
+              bytesTransferred: offset,
+              percent: file.size === 0 ? 100 : (offset / file.size) * 100,
+              speed,
+              direction: 'sending',
+              status: 'Sending'
+            }));
+            lastReportedAt = now;
+            lastReportedBytes = offset;
+          }
+        }
+
+        // Send EOF and COMPLETE messages so receiver knows transfer is complete
+        sessionRef.current?.send(JSON.stringify({
+          type: 'eof',
+          transferId,
+          totalChunks,
+          fileSize: file.size,
+          fileName: file.name
+        }));
+        sessionRef.current?.send(JSON.stringify({
+          type: 'COMPLETE',
+          transferId,
+          totalChunks,
+          fileSize: file.size,
+          fileName: file.name
+        }));
+
+        setTransfer((current) => ({
+          ...(current || {}),
+          bytesTransferred: file.size,
+          percent: 100,
+          direction: 'sending',
+          status: 'Complete'
+        }));
         showNotice('success', `${file.name} was sent directly to the other device.`);
       } catch (error) {
         if (error.name !== 'AbortError') {

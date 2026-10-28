@@ -1,6 +1,5 @@
 export const CHUNK_SIZE = 64 * 1024;
-export const LOW_WATERMARK = 2 * 1024 * 1024;
-export const HIGH_WATERMARK = 8 * 1024 * 1024;
+export const LOW_WATERMARK = 512 * 1024;
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -11,8 +10,18 @@ export function createTransferId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export async function sendFile({ file, dataChannel, signal, onProgress, onComplete }) {
-  if (!file || dataChannel?.readyState !== 'open') {
+export function readSliceAsArrayBuffer(slice) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsArrayBuffer(slice);
+  });
+}
+
+export async function sendFile({ file, dataChannel, session, signal, onProgress, onComplete }) {
+  const channel = dataChannel || session?.dataChannel;
+  if (!file || (!channel && !session) || (channel && channel.readyState !== 'open')) {
     throw new Error('A file and an open data channel are required.');
   }
 
@@ -28,8 +37,32 @@ export async function sendFile({ file, dataChannel, signal, onProgress, onComple
     totalChunks
   };
 
-  dataChannel.bufferedAmountLowThreshold = LOW_WATERMARK;
-  dataChannel.send(JSON.stringify(metadata));
+  const threshold = channel?.bufferedAmountLowThreshold || LOW_WATERMARK;
+  if (channel) {
+    channel.bufferedAmountLowThreshold = threshold;
+  }
+
+  const sendPacket = (packet) => {
+    const str = typeof packet === 'string' ? packet : JSON.stringify(packet);
+    if (session?.send) {
+      session.send(str);
+    } else if (channel && channel.readyState === 'open') {
+      channel.send(str);
+    }
+  };
+
+  const sendChunk = (chunk) => {
+    if (session?.sendChunk) {
+      return session.sendChunk(chunk);
+    }
+    if (channel && channel.readyState === 'open') {
+      channel.send(chunk);
+      return true;
+    }
+    return false;
+  };
+
+  sendPacket(metadata);
 
   let offset = 0;
   let chunkIndex = 0;
@@ -38,22 +71,27 @@ export async function sendFile({ file, dataChannel, signal, onProgress, onComple
 
   while (offset < file.size) {
     if (signal?.aborted) {
-      dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
+      sendPacket({ type: 'CANCEL', transferId });
       throw new DOMException('The transfer was cancelled.', 'AbortError');
     }
 
-    while (dataChannel.bufferedAmount > HIGH_WATERMARK) {
-      await waitForBufferedAmountLow(dataChannel, signal);
+    // Wait for backpressure before sending next chunk
+    const currentChannel = channel || session?.dataChannel;
+    const currentThreshold = currentChannel?.bufferedAmountLowThreshold || LOW_WATERMARK;
+    while (currentChannel && currentChannel.bufferedAmount > currentThreshold) {
+      await waitForBufferedAmountLow(currentChannel, signal);
     }
 
     const slice = file.slice(offset, Math.min(offset + CHUNK_SIZE, file.size));
-    const buffer = await slice.arrayBuffer();
+    const buffer = await readSliceAsArrayBuffer(slice);
+
     if (signal?.aborted) {
-      dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
+      sendPacket({ type: 'CANCEL', transferId });
       throw new DOMException('The transfer was cancelled.', 'AbortError');
     }
 
-    dataChannel.send(buffer);
+    console.log('[Transfer] Sending chunk:', offset, '/', file.size);
+    sendChunk(buffer);
     offset += buffer.byteLength;
     chunkIndex += 1;
 
@@ -70,23 +108,33 @@ export async function sendFile({ file, dataChannel, signal, onProgress, onComple
         chunksSent: chunkIndex,
         percent: file.size === 0 ? 100 : (offset / file.size) * 100,
         speed,
-        bufferedAmount: dataChannel.bufferedAmount
+        bufferedAmount: currentChannel?.bufferedAmount || 0
       });
       lastReportedAt = now;
       lastReportedBytes = offset;
     }
 
-    if (dataChannel.bufferedAmount > LOW_WATERMARK) {
-      await pause();
+    if (currentChannel && currentChannel.bufferedAmount > currentThreshold) {
+      await waitForBufferedAmountLow(currentChannel, signal);
     }
   }
 
-  dataChannel.send(JSON.stringify({
+  // Send EOF and COMPLETE messages so receiver knows transfer is complete
+  sendPacket({
+    type: 'eof',
+    transferId,
+    totalChunks,
+    fileSize: file.size,
+    fileName: file.name
+  });
+  sendPacket({
     type: 'COMPLETE',
     transferId,
     totalChunks,
-    fileSize: file.size
-  }));
+    fileSize: file.size,
+    fileName: file.name
+  });
+
   onComplete?.({ transferId, fileName: file.name, fileSize: file.size });
   return { transferId };
 }
@@ -98,15 +146,19 @@ function waitForBufferedAmountLow(dataChannel, signal) {
       return;
     }
 
+    const threshold = dataChannel?.bufferedAmountLowThreshold || LOW_WATERMARK;
+    if (!dataChannel || dataChannel.bufferedAmount <= threshold) {
+      resolve();
+      return;
+    }
+
     let settled = false;
     const cleanup = () => {
       dataChannel.removeEventListener('bufferedamountlow', handleLow);
       signal?.removeEventListener('abort', handleAbort);
     };
     const finish = (callback) => {
-      if (settled) {
-        return;
-      }
+      if (settled) return;
       settled = true;
       cleanup();
       callback();
@@ -116,8 +168,5 @@ function waitForBufferedAmountLow(dataChannel, signal) {
 
     dataChannel.addEventListener('bufferedamountlow', handleLow, { once: true });
     signal?.addEventListener('abort', handleAbort, { once: true });
-    if (dataChannel.bufferedAmount <= LOW_WATERMARK) {
-      finish(resolve);
-    }
   });
 }
