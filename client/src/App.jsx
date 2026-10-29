@@ -5,7 +5,6 @@ import PinInput from './components/PinInput.jsx';
 import ConfirmationModal from './components/ConfirmationModal.jsx';
 import IncomingFileModal from './components/IncomingFileModal.jsx';
 import FileDropZone from './components/FileDropZone.jsx';
-import TransferProgress from './components/TransferProgress.jsx';
 import { connectSocket, disconnectSocket, emitSocket, onSocketEvent, socket } from './services/socket.js';
 import { WebRtcSession, cleanupWebRTC } from './services/webrtc.js';
 import { createFileReceiver } from './services/fileReceiver.js';
@@ -43,16 +42,34 @@ export default function App() {
   const [verificationCode, setVerificationCode] = useState(null);
   const [webrtcRole, setWebrtcRole] = useState(null);
   const setRole = setWebrtcRole;
+  const role = webrtcRole;
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [step, setStep] = useState('idle');
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [transfer, setTransfer] = useState(null);
+  const [transferStatus, setTransferStatus] = useState('idle'); // 'idle' | 'transferring' | 'completed'
   const [transferSpeed, setTransferSpeed] = useState('0 B/s');
   const lastSpeedCalcTimeRef = useRef(0);
   const bytesSinceLastCalcRef = useRef(0);
   const [files, setFiles] = useState([]);
   const [transferProgress, setTransferProgress] = useState(0);
+
+  const activeFile = useMemo(() => {
+    if (transfer) {
+      return {
+        name: transfer.fileName || transfer.name || 'File',
+        size: transfer.fileSize ?? transfer.size ?? 0
+      };
+    }
+    if (files && files.length > 0) {
+      return {
+        name: files[0].name,
+        size: files[0].size
+      };
+    }
+    return null;
+  }, [transfer, files]);
   const [incomingTransfer, setIncomingTransfer] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedPeer, setSelectedPeer] = useState(null);
@@ -92,8 +109,8 @@ export default function App() {
 
   // Keep isTransferringRef synced with active file transfer state
   useEffect(() => {
-    isTransferringRef.current = (step === 'transfer');
-  }, [step]);
+    isTransferringRef.current = (step === 'transfer' || transferStatus === 'transferring');
+  }, [step, transferStatus]);
 
   useEffect(() => {
     const checkForNewVersion = async () => {
@@ -230,6 +247,7 @@ export default function App() {
     setTransfer(null);
     setFiles([]);
     setTransferProgress(0);
+    setTransferStatus('idle');
     setIncomingTransfer(null);
     setShowConfirmationModal(false);
     setPrompt(null);
@@ -366,6 +384,7 @@ export default function App() {
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 10000);
 
       setTransferProgress(100);
+      setTransferStatus('completed');
       setTransfer((current) => ({
         ...(current || {}),
         fileName,
@@ -376,7 +395,7 @@ export default function App() {
         status: 'Complete'
       }));
 
-      showNotice('success', `${fileName} (${formatBytes(totalBytes)}) downloaded successfully.`);
+      showNotification(`✓ ${fileName || 'File'} received successfully!`, "success");
     } catch (err) {
       console.error('[Transfer] Failed to assemble or download file:', err);
       showNotice('error', `Failed to save ${fileName}: ${err.message}`);
@@ -403,6 +422,7 @@ export default function App() {
             saved: false
           };
 
+          setTransferStatus('transferring');
           setTransferProgress(0);
           setTransfer({
             fileName,
@@ -436,6 +456,7 @@ export default function App() {
           setTransfer(null);
           setFiles([]);
           setTransferProgress(0);
+          setTransferStatus('idle');
           showNotice('info', 'The other device cancelled the transfer.');
         }
       } catch (err) {
@@ -950,6 +971,7 @@ export default function App() {
     let lastCalcTime = performance.now();
     let bytesSinceLastCalc = 0;
 
+    setTransferStatus('transferring');
     setTransfer({
       fileName: file.name,
       fileSize: file.size,
@@ -1038,6 +1060,7 @@ export default function App() {
       }));
       setTransferProgress(100);
       setTransferSpeed('0 B/s');
+      setTransferStatus('completed');
       setTransfer((current) => ({
         ...(current || {}),
         bytesTransferred: file.size,
@@ -1046,9 +1069,10 @@ export default function App() {
         status: 'Complete'
       }));
       console.log('[Transfer 🚀] Completed sending:', file.name);
-      showNotice('success', `${file.name} was sent directly to the other device.`);
+      showNotification(`✓ ${file.name || 'File'} sent successfully!`, "success");
     } catch (err) {
       setTransferSpeed('0 B/s');
+      setTransferStatus('idle');
       if (err.name !== 'AbortError') {
         console.error('[Transfer ❌] Send failed:', err);
         showNotification("Transfer interrupted.", "error");
@@ -1092,6 +1116,7 @@ export default function App() {
     setTransfer(null);
     setFiles([]);
     setTransferProgress(0);
+    setTransferStatus('idle');
   };
 
   const rotateProgress = Math.max(0, Math.min(100, (pinSeconds / 120) * 100));
@@ -1349,17 +1374,109 @@ export default function App() {
               onFiles={handleFiles}
               disabled={!isChannelReady || Boolean(transfer && transfer.status === 'Sending')}
             />
-            {transfer && (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', margin: '8px 0 12px', padding: '4px 12px', borderRadius: '8px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.2)' }}>
-                <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', fontFamily: 'DM Mono, monospace' }}>Speed:</span>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>{transferSpeed || '0 B/s'}</span>
+            {/* Active / Completed File Card */}
+            {activeFile && (
+              <div
+                className={`mt-6 w-full rounded-2xl border p-5 transition-all duration-500 ${
+                  transferProgress === 100
+                    ? 'bg-slate-900/90 border-emerald-500/40 shadow-xl shadow-emerald-500/10'
+                    : 'bg-slate-900/60 border-slate-800'
+                }`}
+              >
+                {/* File Info Row */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* Animated Icon: Spinner/Arrow while transferring, Glowing Checkmark when completed */}
+                    <div
+                      className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors duration-500 ${
+                        transferProgress === 100
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                      }`}
+                    >
+                      {transferProgress === 100 ? (
+                        <svg className="w-6 h-6 animate-in zoom-in-75 duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                      )}
+                    </div>
+
+                    {/* Filename & Meta */}
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-semibold text-white truncate max-w-[280px] sm:max-w-md">
+                        {activeFile.name}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {formatBytes(activeFile.size)} ·{' '}
+                        <span className={transferProgress === 100 ? 'text-emerald-400 font-medium' : 'text-slate-400'}>
+                          {transferProgress === 100
+                            ? (transfer?.direction === 'sending' || role === 'initiator'
+                                ? 'Successfully delivered to peer'
+                                : 'Safely downloaded to your device')
+                            : (transfer?.direction === 'sending' || role === 'initiator'
+                                ? 'Sending...'
+                                : 'Receiving...')}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Percentage Pill */}
+                  <div className="text-right shrink-0">
+                    <span
+                      className={`text-base font-mono font-bold tracking-tight ${
+                        transferProgress === 100 ? 'text-emerald-400' : 'text-slate-300'
+                      }`}
+                    >
+                      {transferProgress}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Progress Track */}
+                <div className="relative w-full h-2 rounded-full bg-slate-950 mt-4 overflow-hidden border border-slate-800/80">
+                  <div
+                    className={`h-full transition-all duration-300 ease-out rounded-full ${
+                      transferProgress === 100
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-md shadow-emerald-500/50'
+                        : 'bg-gradient-to-r from-cyan-500 to-emerald-400'
+                    }`}
+                    style={{ width: `${transferProgress}%` }}
+                  />
+                </div>
+
+                {/* Status Footer */}
+                <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono mt-3">
+                  <span>{transferProgress === 100 ? '0 B/s' : transferSpeed}</span>
+
+                  <div className="flex items-center gap-3">
+                    {transferProgress < 100 && transfer?.direction === 'sending' && (
+                      <button
+                        type="button"
+                        onClick={cancelTransfer}
+                        className="text-xs text-rose-400 hover:text-rose-300 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    {transferProgress === 100 ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-sans font-medium text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        Complete
+                      </span>
+                    ) : (
+                      <span className="capitalize text-slate-400">
+                        {transfer?.direction === 'sending' || role === 'initiator' ? 'Sending' : 'Receiving'}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
-            <TransferProgress
-              transfer={transfer}
-              transferSpeed={transferSpeed}
-              onCancel={transfer?.status === 'Sending' ? cancelTransfer : undefined}
-            />
             <div className="transfer-footnote"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
           </section>
         )}
