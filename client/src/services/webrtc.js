@@ -38,8 +38,13 @@ export function getIceServers() {
   return ICE_SERVERS;
 }
 
-export const CHUNK_SIZE = 16384; // 16 KB strict limit for mobile cellular/TURN SCTP
-export const MAX_BUFFER_AMOUNT = 65536; // 64 KB max backpressure ceiling
+// Universal 64 KB chunk size: safe across all modern mobile browsers and cellular/TURN relays
+export const CHUNK_SIZE = 64 * 1024; // 65,536 bytes (64 KB)
+
+// High-throughput backpressure limits (2 MB ceiling, 512 KB threshold)
+export const MAX_BUFFER_CEILING = 2 * 1024 * 1024; // 2 MB
+export const MAX_BUFFER_AMOUNT = MAX_BUFFER_CEILING;
+export const BUFFER_LOW_THRESHOLD = 512 * 1024; // 512 KB
 
 export function cleanupWebRTC() {
   if (dataChannel) {
@@ -74,7 +79,8 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     if (!channel) return;
     channel.binaryType = 'arraybuffer';
     dataChannel = channel;
-    channel.bufferedAmountLowThreshold = 32768; // 32 KB threshold
+    // Set threshold to 512 KB so we wake up before the buffer completely drains
+    channel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
 
     if (dataChannel.readyState === 'open') {
       dataChannel.binaryType = 'arraybuffer';
@@ -137,7 +143,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     pc.ondatachannel = (event) => {
       console.log('[WebRTC 📥] Received remote DataChannel');
       event.channel.binaryType = 'arraybuffer';
-      event.channel.bufferedAmountLowThreshold = 32768;
+      event.channel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
       setupDataChannel(event.channel);
     };
   }
@@ -147,7 +153,7 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     console.log('[WebRTC 🛠️] Initiator creating DataChannel');
     const channel = pc.createDataChannel('fileTransfer', { ordered: true });
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 32768;
+    channel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
     setupDataChannel(channel);
 
     try {

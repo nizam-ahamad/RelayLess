@@ -409,7 +409,7 @@ export default function App() {
       bytesSinceLastCalcRef.current += buffer.byteLength;
 
       const now = performance.now();
-      if (now - lastSpeedCalcTimeRef.current >= 500) { // Update every 500ms
+      if (now - lastSpeedCalcTimeRef.current >= 300) { // Update every 300ms
         const elapsedSec = (now - lastSpeedCalcTimeRef.current) / 1000;
         const currentSpeed = bytesSinceLastCalcRef.current / elapsedSec;
         setTransferSpeed(formatSpeed(currentSpeed));
@@ -859,6 +859,150 @@ export default function App() {
     handleFiles(selected);
   };
 
+  const sendFile = async (file) => {
+    const dataChannel = sessionRef.current?.getDataChannel?.() || sessionRef.current?.dataChannel;
+    if (!dataChannel || dataChannel.readyState !== 'open') {
+      showNotification("P2P bridge is not open.", "warning");
+      return;
+    }
+
+    const abortController = new AbortController();
+    transferAbortRef.current = abortController;
+    const transferId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    // 1. Send file metadata header
+    const header = JSON.stringify({
+      type: 'file-header',
+      name: file.name,
+      size: file.size,
+      mimeType: file.type || 'application/octet-stream',
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || 'application/octet-stream',
+      transferId
+    });
+    dataChannel.send(header);
+
+    // 2. High-speed streaming parameters
+    const CHUNK_SIZE = 64 * 1024; // 64 KB
+    const MAX_BUFFER = 2 * 1024 * 1024; // 2 MB backpressure ceiling
+    const BLOCK_SIZE = 1024 * 1024; // Read 1 MB from disk at a time to reduce I/O overhead
+
+    let offset = 0;
+    let sentBytes = 0;
+    let lastCalcTime = performance.now();
+    let bytesSinceLastCalc = 0;
+
+    setTransfer({
+      fileName: file.name,
+      fileSize: file.size,
+      bytesTransferred: 0,
+      percent: 0,
+      direction: 'sending',
+      status: 'Sending'
+    });
+
+    try {
+      while (offset < file.size) {
+        if (abortController.signal.aborted) {
+          setTransferSpeed('0 B/s');
+          dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
+          throw new DOMException('The transfer was cancelled.', 'AbortError');
+        }
+
+        // Read a 1 MB block from disk into memory
+        const blockEnd = Math.min(offset + BLOCK_SIZE, file.size);
+        const blockSlice = file.slice(offset, blockEnd);
+        const blockBuffer = await blockSlice.arrayBuffer();
+
+        // Stream the 1 MB block in 64 KB slices
+        let blockOffset = 0;
+        while (blockOffset < blockBuffer.byteLength) {
+          if (abortController.signal.aborted) {
+            setTransferSpeed('0 B/s');
+            dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
+            throw new DOMException('The transfer was cancelled.', 'AbortError');
+          }
+
+          // Wait only if DataChannel buffer exceeds 2 MB
+          if (dataChannel.bufferedAmount > MAX_BUFFER) {
+            await new Promise((resolve) => {
+              const listener = () => {
+                dataChannel.removeEventListener('bufferedamountlow', listener);
+                resolve();
+              };
+              dataChannel.addEventListener('bufferedamountlow', listener);
+            });
+          }
+
+          const sliceEnd = Math.min(blockOffset + CHUNK_SIZE, blockBuffer.byteLength);
+          const chunk = blockBuffer.slice(blockOffset, sliceEnd);
+          dataChannel.send(chunk);
+
+          blockOffset += chunk.byteLength;
+          sentBytes += chunk.byteLength;
+          bytesSinceLastCalc += chunk.byteLength;
+
+          // Update progress and speed calculation every 300ms
+          const now = performance.now();
+          if (now - lastCalcTime >= 300 || sentBytes === file.size) {
+            const elapsedSec = (now - lastCalcTime) / 1000;
+            const currentSpeed = bytesSinceLastCalc / elapsedSec;
+            setTransferSpeed(formatSpeed(currentSpeed));
+            lastCalcTime = now;
+            bytesSinceLastCalc = 0;
+
+            const progress = file.size === 0 ? 100 : Math.min(100, Math.round((sentBytes / file.size) * 100));
+            setTransferProgress(progress);
+            setTransfer((current) => ({
+              ...(current || {}),
+              fileName: file.name,
+              fileSize: file.size,
+              bytesTransferred: sentBytes,
+              percent: progress,
+              speed: currentSpeed,
+              direction: 'sending',
+              status: sentBytes === file.size ? 'Complete' : 'Sending'
+            }));
+          }
+        }
+
+        offset = blockEnd;
+      }
+
+      // 3. Send EOF signal
+      dataChannel.send(JSON.stringify({
+        type: 'file-eof',
+        name: file.name,
+        fileName: file.name,
+        size: file.size,
+        fileSize: file.size,
+        transferId
+      }));
+      setTransferProgress(100);
+      setTransferSpeed('0 B/s');
+      setTransfer((current) => ({
+        ...(current || {}),
+        bytesTransferred: file.size,
+        percent: 100,
+        direction: 'sending',
+        status: 'Complete'
+      }));
+      console.log('[Transfer 🚀] Completed sending:', file.name);
+      showNotice('success', `${file.name} was sent directly to the other device.`);
+    } catch (err) {
+      setTransferSpeed('0 B/s');
+      if (err.name !== 'AbortError') {
+        console.error('[Transfer ❌] Send failed:', err);
+        showNotification("Transfer interrupted.", "error");
+      } else {
+        showNotice('info', 'File transfer was cancelled.');
+      }
+    } finally {
+      transferAbortRef.current = null;
+    }
+  };
+
   const handleFiles = async (files) => {
     const selected = Array.from(files || []);
     if (selected.length === 0) return;
@@ -877,139 +1021,8 @@ export default function App() {
     setFiles(Array.from(files || []));
     setTransferProgress(0);
 
-    const CHUNK_SIZE = 16384; // 16 KB - Safe across all mobile cellular/TURN links
-    for (const file of files) {
-      const abortController = new AbortController();
-      transferAbortRef.current = abortController;
-      const transferId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-      setTransfer({
-        fileName: file.name,
-        fileSize: file.size,
-        bytesTransferred: 0,
-        percent: 0,
-        direction: 'sending',
-        status: 'Sending'
-      });
-
-      try {
-        // 1. Send file metadata header
-        const header = JSON.stringify({
-          type: 'file-header',
-          name: file.name,
-          size: file.size,
-          mimeType: file.type || 'application/octet-stream',
-          // Backwards compatibility fields
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type || 'application/octet-stream',
-          transferId,
-          totalChunks,
-          chunkSize: CHUNK_SIZE
-        });
-        dataChannel.send(header);
-
-        // 2. Stream binary slices with 16KB chunks
-        let offset = 0;
-        let lastReportedAt = performance.now();
-        let lastReportedBytes = 0;
-        let sendStartTime = performance.now();
-        let sentBytesSinceCalc = 0;
-        let lastSendCalcTime = sendStartTime;
-
-        while (offset < file.size) {
-          if (abortController.signal.aborted) {
-            setTransferSpeed('0 B/s');
-            dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
-            throw new DOMException('The transfer was cancelled.', 'AbortError');
-          }
-
-          // Check backpressure ceiling (64 KB)
-          if (dataChannel.bufferedAmount > 65536) {
-            await new Promise((resolve) => {
-              dataChannel.onbufferedamountlow = () => {
-                dataChannel.onbufferedamountlow = null;
-                resolve();
-              };
-            });
-          }
-
-          const slice = file.slice(offset, offset + CHUNK_SIZE);
-          const buffer = await slice.arrayBuffer();
-
-          if (abortController.signal.aborted) {
-            setTransferSpeed('0 B/s');
-            dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
-            throw new DOMException('The transfer was cancelled.', 'AbortError');
-          }
-
-          dataChannel.send(buffer);
-          offset += buffer.byteLength;
-          sentBytesSinceCalc += buffer.byteLength;
-
-          const now = performance.now();
-          if (now - lastSendCalcTime >= 500) {
-            const elapsedSec = (now - lastSendCalcTime) / 1000;
-            const currentSpeed = sentBytesSinceCalc / elapsedSec;
-            setTransferSpeed(formatSpeed(currentSpeed));
-            lastSendCalcTime = now;
-            sentBytesSinceCalc = 0;
-          }
-
-          const progress = file.size === 0 ? 100 : Math.min(100, Math.round((offset / file.size) * 100));
-          setTransferProgress(progress);
-
-          if (now - lastReportedAt >= 150 || offset === file.size) {
-            const elapsedSeconds = Math.max((now - lastReportedAt) / 1000, 0.001);
-            const speed = (offset - lastReportedBytes) / elapsedSeconds;
-            setTransfer((current) => ({
-              ...(current || {}),
-              fileName: file.name,
-              fileSize: file.size,
-              bytesTransferred: offset,
-              percent: progress,
-              speed,
-              direction: 'sending',
-              status: offset === file.size ? 'Complete' : 'Sending'
-            }));
-            lastReportedAt = now;
-            lastReportedBytes = offset;
-          }
-        }
-        setTransferSpeed('0 B/s');
-
-        // 3. Send EOF signal
-        dataChannel.send(JSON.stringify({
-          type: 'file-eof',
-          name: file.name,
-          fileName: file.name,
-          size: file.size,
-          fileSize: file.size,
-          transferId
-        }));
-        console.log('[Transfer] File transmission complete:', file.name);
-
-        setTransferProgress(100);
-        setTransfer((current) => ({
-          ...(current || {}),
-          bytesTransferred: file.size,
-          percent: 100,
-          direction: 'sending',
-          status: 'Complete'
-        }));
-        showNotice('success', `${file.name} was sent directly to the other device.`);
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.error('[Transfer] Failed to send file:', error);
-          showNotice('error', error.message || `Could not send ${file.name}.`);
-        } else {
-          showNotice('info', 'File transfer was cancelled.');
-        }
-        break;
-      } finally {
-        transferAbortRef.current = null;
-      }
+    for (const file of selected) {
+      await sendFile(file);
     }
   };
 
