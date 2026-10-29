@@ -95,7 +95,7 @@ export default function App() {
 
   useEffect(() => {
     const handleBeforeUnload = () => {
-      const activePairingId = pairingId || currentPairingIdRef.current;
+      const activePairingId = currentPairingIdRef.current;
       if (activePairingId) {
         emitSocket('cancel_session', { pairingId: activePairingId });
         emitSocket('pairing_cancel', { pairingId: activePairingId });
@@ -109,9 +109,8 @@ export default function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      handleBeforeUnload();
     };
-  }, [pairingId]);
+  }, []);
 
   const pairingUrl = useMemo(() => {
     if (!peer?.peerId) {
@@ -739,7 +738,6 @@ export default function App() {
         return;
       }
       setPinError(false);
-      socket.emit('request_pairing', { pin: normalized, deviceName });
       emitSocket('request_pairing', {
         pin: normalized,
         deviceName
@@ -754,7 +752,6 @@ export default function App() {
         showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
         return;
       }
-      socket.emit('request_pairing', { targetPeerId: scannedTargetPeerId, deviceName });
       emitSocket('request_pairing', {
         targetPeerId: scannedTargetPeerId,
         deviceName
