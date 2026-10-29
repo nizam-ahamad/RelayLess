@@ -9,8 +9,8 @@ export default function QRCodeDisplay({ value }) {
       return undefined;
     }
     QRCode.toCanvas(canvasRef.current, value, {
-      width: 220,
-      margin: 2,
+      width: 160,
+      margin: 1,
       color: {
         dark: '#0b1424',
         light: '#ffffff'
@@ -21,8 +21,8 @@ export default function QRCodeDisplay({ value }) {
   }, [value]);
 
   return (
-    <div className="qr-frame" aria-label="Pairing QR code">
-      <canvas ref={canvasRef} />
+    <div className="qr-frame" style={{ width: '100%', height: '100%', padding: '4px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }} aria-label="Pairing QR code">
+      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block', borderRadius: '6px' }} />
     </div>
   );
 }

@@ -1123,16 +1123,22 @@ export default function App() {
       </header>
 
       <main className="main-content">
-        <section className="hero-copy">
-          <div className="eyebrow">No upload. No storage. No middleman.</div>
-          <h1>Move the big stuff<br /><em>without the detour.</em></h1>
-          <p>Relayless builds a private encrypted bridge between your browsers. Your files travel directly from one device to the other.</p>
-          <div className="hero-notes">
-            <span><i>↔</i> Peer-to-peer WebRTC</span>
-            <span><i>◌</i> Streamed, not buffered</span>
-            <span><i>▣</i> Up to 30 GB+</span>
+        <div className="max-w-6xl mx-auto px-4 pt-4 pb-2 text-center md:text-left">
+          <div className="text-[10px] tracking-widest text-emerald-400 font-bold mb-1 uppercase font-mono">
+            NO UPLOAD. NO STORAGE. NO MIDDLEMAN.
           </div>
-        </section>
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight mb-2">
+            Move the big stuff without the detour.
+          </h1>
+          <p className="text-xs md:text-sm text-slate-400 mb-3 max-w-2xl leading-relaxed">
+            Relayless builds a private encrypted bridge between your browsers. Your files travel directly from one device to the other.
+          </p>
+          <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-[11px] text-slate-400 mb-2">
+            <span><i className="text-emerald-400 not-italic mr-1.5 font-bold">↔</i> Peer-to-peer WebRTC</span>
+            <span><i className="text-emerald-400 not-italic mr-1.5 font-bold">◌</i> Streamed, not buffered</span>
+            <span><i className="text-emerald-400 not-italic mr-1.5 font-bold">▣</i> Up to 30 GB+</span>
+          </div>
+        </div>
 
         {notice && <div className={`notice notice-${notice.type}`} role="status">{notice.message}</div>}
 
@@ -1181,68 +1187,129 @@ export default function App() {
         )}
 
         {step !== 'transfer' && connectionState !== 'failed' && connectionState !== 'connecting' && (
-          <section className="pairing-grid">
-            <article className="panel my-device-panel">
-              <div className="panel-heading">
+          <div className="max-w-6xl mx-auto px-4 pb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+              {/* Card #1: Show your door */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 md:p-6 flex flex-col justify-between shadow-xl">
                 <div>
-                  <div className="section-kicker">01 / Your device</div>
-                  <h2>Show your door</h2>
-                </div>
-                <span className="live-label"><span className="status-dot" />Live</span>
-              </div>
-              <div className="my-device-layout">
-                <div className="qr-column">
-                  <QRCodeDisplay value={pairingUrl} />
-                  <span className="scan-caption">Scan to connect</span>
-                </div>
-                <div className="pin-column">
-                  <label htmlFor="device-name">Device nickname</label>
-                  <input
-                    id="device-name"
-                    className="text-input"
-                    value={deviceName}
-                    maxLength={80}
-                    onChange={(event) => setDeviceName(event.target.value)}
-                  />
-                  <div className="pin-label">Your PIN</div>
-                  <div className="pin-display">{peer?.pin || '------'}</div>
-                  <div className="pin-expiry">
-                    <div className="ring" style={{ '--progress': `${rotateProgress}%` }}><span>{pinSeconds}s</span></div>
-                    <span>Refreshes every<br />2 minutes</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[11px] font-mono text-cyan-400 font-semibold tracking-wider">01 / YOUR DEVICE</span>
+                    <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> LIVE
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-bold text-white mb-4">Show your door</h2>
+
+                  {/* QR & Details Row */}
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <div className="bg-white p-2.5 rounded-xl shadow-inner shrink-0">
+                      {/* Set QR display size to a clean ~160px-180px */}
+                      <div className="w-[160px] h-[160px] flex items-center justify-center">
+                        <QRCodeDisplay value={pairingUrl} />
+                      </div>
+                    </div>
+
+                    <div className="flex-1 w-full space-y-3">
+                      <div>
+                        <label className="text-[10px] font-mono text-slate-400 uppercase">Device Nickname</label>
+                        <input
+                          type="text"
+                          value={deviceName}
+                          maxLength={80}
+                          onChange={(e) => setDeviceName(e.target.value)}
+                          className="w-full mt-1 px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-mono text-slate-400 uppercase">Your PIN</label>
+                        <div className="text-2xl font-mono font-black text-amber-400 tracking-wider">
+                          {peer?.pin || '------'}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="ring" style={{ '--progress': `${rotateProgress}%` }}><span>{pinSeconds}s</span></div>
+                          <span className="text-[10px] text-slate-500">Refreshes every 2 minutes</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                <p className="text-[10px] text-slate-500 mt-4">This PIN is temporary and only used to introduce devices.</p>
               </div>
-              <div className="privacy-note"><span>✦</span> This PIN is temporary and only used to introduce devices.</div>
-            </article>
 
-            <article className="panel connect-panel">
-              <div className="panel-heading">
+              {/* Card #2: Open a door */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 md:p-6 flex flex-col justify-between shadow-xl">
                 <div>
-                  <div className="section-kicker">02 / Other device</div>
-                  <h2>Open a door</h2>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[11px] font-mono text-cyan-400 font-semibold tracking-wider">02 / OTHER DEVICE</span>
+                    <span className="text-[11px] font-mono text-slate-500">02</span>
+                  </div>
+                  <h2 className="text-xl font-bold text-white mb-1">Open a door</h2>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Enter the six-character PIN shown on the other device, or scan its QR code.
+                  </p>
+
+                  {/* PIN Input & Connect Button */}
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[10px] font-mono text-slate-400 uppercase">Enter Pairing PIN</label>
+                      <div className="flex gap-2 mt-1">
+                        <input
+                          type="text"
+                          maxLength={6}
+                          value={pinInput}
+                          onChange={(e) => {
+                            setPinError(false);
+                            setPinInput(e.target.value.toUpperCase());
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleJoinWithPin(pinInput);
+                            }
+                          }}
+                          placeholder="ABC123"
+                          disabled={isBusy}
+                          className="flex-1 px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-lg font-mono tracking-widest text-white uppercase focus:outline-none focus:border-cyan-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleJoinWithPin(pinInput)}
+                          disabled={isBusy || !pinInput.trim()}
+                          className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-sm transition-colors"
+                        >
+                          Connect
+                        </button>
+                      </div>
+                      {pinError && <div className="error-text mt-1 text-xs text-red-400">{pinError}</div>}
+                    </div>
+
+                    <div className="relative flex items-center justify-center my-3">
+                      <div className="border-t border-slate-800 w-full"></div>
+                      <span className="bg-slate-900 px-2 text-[10px] text-slate-500 uppercase font-mono absolute">or</span>
+                    </div>
+
+                    {/* Camera Scanner Button */}
+                    <button
+                      type="button"
+                      onClick={() => setScannerOpen(true)}
+                      disabled={isBusy}
+                      className="w-full py-2.5 px-4 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-between text-xs font-medium transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                        </svg>
+                        <span>Scan QR code</span>
+                      </div>
+                      <span className="text-slate-500 text-[10px]">Instant connect →</span>
+                    </button>
+                  </div>
                 </div>
-                <span className="step-number">02</span>
+
+                <p className="text-[10px] text-slate-500 mt-4">You will both confirm a matching code before anything connects.</p>
               </div>
-              <p className="panel-intro">Enter the six-character PIN shown on the other device, or scan its QR code.</p>
-              <PinInput
-                value={pinInput}
-                onChange={(val) => {
-                  setPinError(false);
-                  setPinInput(val);
-                }}
-                onSubmit={() => handleConnect()}
-                disabled={isBusy}
-                hasError={pinError}
-              />
-              <div className="or-divider"><span>or</span></div>
-              <button className="scan-button" type="button" onClick={() => setScannerOpen(true)} disabled={isBusy}>
-                <span className="scan-button-icon">⌁</span>
-                <span><strong>Scan QR code</strong><small>Use your camera to connect instantly</small></span>
-                <span className="arrow">→</span>
-              </button>
-              <div className="connection-hint"><span className="lock-icon">⌑</span> You will both confirm a matching code before anything connects.</div>
-            </article>
-          </section>
+            </div>
+          </div>
         )}
 
         {step === 'transfer' && connectionState !== 'failed' && (
