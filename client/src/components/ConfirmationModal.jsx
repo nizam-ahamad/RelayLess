@@ -1,10 +1,21 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, verificationCode, rawCode, peerNickname }) {
+  const [isWaitingPeer, setIsWaitingPeer] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) setIsWaitingPeer(false);
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const activeCode = code || verificationCode || rawCode;
   const codeStr = activeCode ? String(activeCode).padStart(2, '0') : '--';
+
+  const handleAllow = () => {
+    setIsWaitingPeer(true);
+    onConfirm();
+  };
 
   return (
     <div
@@ -102,7 +113,7 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
           className="text-[11px] text-slate-400 mb-6 muted small"
           style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '1.5rem' }}
         >
-          Both people must accept to begin the encrypted WebRTC handshake.
+          {isWaitingPeer ? "Waiting for the other device to accept..." : "Both people must accept to begin the encrypted WebRTC handshake."}
         </p>
 
         <div
@@ -112,7 +123,8 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-semibold text-slate-300 transition-colors button button-secondary"
+            disabled={isWaitingPeer}
+            className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-semibold text-slate-300 transition-colors disabled:opacity-50 button button-secondary"
             style={{
               flex: 1,
               padding: '0.75rem 0',
@@ -122,15 +134,17 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
               fontSize: '0.875rem',
               fontWeight: 600,
               border: 'none',
-              cursor: 'pointer'
+              cursor: isWaitingPeer ? 'not-allowed' : 'pointer',
+              opacity: isWaitingPeer ? 0.5 : 1
             }}
           >
             Reject
           </button>
           <button
             type="button"
-            onClick={onConfirm}
-            className="flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold text-slate-950 transition-colors shadow-lg shadow-emerald-500/20 button button-primary"
+            onClick={handleAllow}
+            disabled={isWaitingPeer}
+            className="flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold text-slate-950 transition-colors shadow-lg shadow-emerald-500/20 disabled:opacity-75 flex items-center justify-center gap-2 button button-primary"
             style={{
               flex: 1,
               padding: '0.75rem 0',
@@ -140,10 +154,30 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
               fontSize: '0.875rem',
               fontWeight: 600,
               border: 'none',
-              cursor: 'pointer'
+              cursor: isWaitingPeer ? 'not-allowed' : 'pointer',
+              opacity: isWaitingPeer ? 0.8 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem'
             }}
           >
-            Allow connection
+            {isWaitingPeer ? (
+              <>
+                <svg
+                  className="animate-spin h-4 w-4 text-slate-950"
+                  style={{ width: '1rem', height: '1rem', animation: 'spin 1s linear infinite' }}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25"></circle>
+                  <path className="opacity-75" fill="currentColor" opacity="0.75" d="M4 12a8 8 0 018-8v8H4z"></path>
+                </svg>
+                <span>Waiting...</span>
+              </>
+            ) : (
+              "Allow connection"
+            )}
           </button>
         </div>
       </div>

@@ -22,6 +22,13 @@ function readSliceAsArrayBuffer(slice) {
   });
 }
 
+export function formatSpeed(bytesPerSecond) {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return '0 B/s';
+  if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`;
+  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
 const DEFAULT_DEVICE_NAME = 'My device';
 
 export default function App() {
@@ -41,6 +48,9 @@ export default function App() {
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [transfer, setTransfer] = useState(null);
+  const [transferSpeed, setTransferSpeed] = useState('0 B/s');
+  const lastSpeedCalcTimeRef = useRef(0);
+  const bytesSinceLastCalcRef = useRef(0);
   const [files, setFiles] = useState([]);
   const [transferProgress, setTransferProgress] = useState(0);
   const [incomingTransfer, setIncomingTransfer] = useState(null);
@@ -117,10 +127,10 @@ export default function App() {
       return '';
     }
     const url = new URL(window.location.href);
-    url.search = `?pair=${encodeURIComponent(peer.peerId)}`;
+    url.search = `?pair=${encodeURIComponent(peer.peerId)}${peer?.pin ? `&pin=${encodeURIComponent(peer.pin)}` : ''}`;
     url.hash = '';
     return url.toString();
-  }, [peer?.peerId]);
+  }, [peer?.peerId, peer?.pin]);
 
   const showNotice = useCallback((type, message) => {
     setNotice({ type, message });
@@ -132,6 +142,9 @@ export default function App() {
   }, [showNotice]);
 
   const closeSession = useCallback((message) => {
+    setTransferSpeed('0 B/s');
+    lastSpeedCalcTimeRef.current = 0;
+    bytesSinceLastCalcRef.current = 0;
     if (connectionTimeoutRef.current) {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
@@ -268,6 +281,9 @@ export default function App() {
   }, [showNotice]);
 
   const saveIncomingFile = useCallback(() => {
+    setTransferSpeed('0 B/s');
+    lastSpeedCalcTimeRef.current = 0;
+    bytesSinceLastCalcRef.current = 0;
     const incoming = incomingFileRef.current;
     if (!incoming || !incoming.metadata || incoming.saved) {
       return;
@@ -345,8 +361,14 @@ export default function App() {
           }
         } else if (msg.type === 'file-eof' || msg.type === 'eof' || msg.type === 'COMPLETE') {
           console.log(`[Transfer] Received ${msg.type} signal, completing file download`);
+          setTransferSpeed('0 B/s');
+          lastSpeedCalcTimeRef.current = 0;
+          bytesSinceLastCalcRef.current = 0;
           saveIncomingFile();
         } else if (msg.type === 'CANCEL') {
+          setTransferSpeed('0 B/s');
+          lastSpeedCalcTimeRef.current = 0;
+          bytesSinceLastCalcRef.current = 0;
           incomingFileRef.current = {
             metadata: null,
             totalExpectedBytes: 0,
@@ -384,6 +406,16 @@ export default function App() {
 
       incoming.chunks.push(buffer);
       incoming.receivedBytes += buffer.byteLength;
+      bytesSinceLastCalcRef.current += buffer.byteLength;
+
+      const now = performance.now();
+      if (now - lastSpeedCalcTimeRef.current >= 500) { // Update every 500ms
+        const elapsedSec = (now - lastSpeedCalcTimeRef.current) / 1000;
+        const currentSpeed = bytesSinceLastCalcRef.current / elapsedSec;
+        setTransferSpeed(formatSpeed(currentSpeed));
+        lastSpeedCalcTimeRef.current = now;
+        bytesSinceLastCalcRef.current = 0;
+      }
 
       const receivedBytes = incoming.receivedBytes;
       const totalExpectedBytes = incoming.totalExpectedBytes;
@@ -403,6 +435,7 @@ export default function App() {
       }
 
       if (totalExpectedBytes > 0 && receivedBytes >= totalExpectedBytes) {
+        setTransferSpeed('0 B/s');
         saveIncomingFile();
       }
     }
@@ -881,9 +914,13 @@ export default function App() {
         let offset = 0;
         let lastReportedAt = performance.now();
         let lastReportedBytes = 0;
+        let sendStartTime = performance.now();
+        let sentBytesSinceCalc = 0;
+        let lastSendCalcTime = sendStartTime;
 
         while (offset < file.size) {
           if (abortController.signal.aborted) {
+            setTransferSpeed('0 B/s');
             dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
             throw new DOMException('The transfer was cancelled.', 'AbortError');
           }
@@ -902,17 +939,27 @@ export default function App() {
           const buffer = await slice.arrayBuffer();
 
           if (abortController.signal.aborted) {
+            setTransferSpeed('0 B/s');
             dataChannel.send(JSON.stringify({ type: 'CANCEL', transferId }));
             throw new DOMException('The transfer was cancelled.', 'AbortError');
           }
 
           dataChannel.send(buffer);
           offset += buffer.byteLength;
+          sentBytesSinceCalc += buffer.byteLength;
+
+          const now = performance.now();
+          if (now - lastSendCalcTime >= 500) {
+            const elapsedSec = (now - lastSendCalcTime) / 1000;
+            const currentSpeed = sentBytesSinceCalc / elapsedSec;
+            setTransferSpeed(formatSpeed(currentSpeed));
+            lastSendCalcTime = now;
+            sentBytesSinceCalc = 0;
+          }
 
           const progress = file.size === 0 ? 100 : Math.min(100, Math.round((offset / file.size) * 100));
           setTransferProgress(progress);
 
-          const now = performance.now();
           if (now - lastReportedAt >= 150 || offset === file.size) {
             const elapsedSeconds = Math.max((now - lastReportedAt) / 1000, 0.001);
             const speed = (offset - lastReportedBytes) / elapsedSeconds;
@@ -930,6 +977,7 @@ export default function App() {
             lastReportedBytes = offset;
           }
         }
+        setTransferSpeed('0 B/s');
 
         // 3. Send EOF signal
         dataChannel.send(JSON.stringify({
@@ -968,6 +1016,7 @@ export default function App() {
   handleFilesRef.current = handleFiles;
 
   const cancelTransfer = () => {
+    setTransferSpeed('0 B/s');
     transferAbortRef.current?.abort();
     transferAbortRef.current = null;
     setTransfer(null);
@@ -1163,7 +1212,17 @@ export default function App() {
               onFiles={handleFiles}
               disabled={!isChannelReady || Boolean(transfer && transfer.status === 'Sending')}
             />
-            <TransferProgress transfer={transfer} onCancel={transfer?.status === 'Sending' ? cancelTransfer : undefined} />
+            {transfer && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', margin: '8px 0 12px', padding: '4px 12px', borderRadius: '8px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.2)' }}>
+                <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', fontFamily: 'DM Mono, monospace' }}>Speed:</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>{transferSpeed || '0 B/s'}</span>
+              </div>
+            )}
+            <TransferProgress
+              transfer={transfer}
+              transferSpeed={transferSpeed}
+              onCancel={transfer?.status === 'Sending' ? cancelTransfer : undefined}
+            />
             <div className="transfer-footnote"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
           </section>
         )}
@@ -1182,7 +1241,6 @@ export default function App() {
         verificationCode={verificationCode}
         peerNickname={peerNickname}
         onConfirm={() => {
-          setShowConfirmationModal(false);
           const activePairingId = pairingId || currentPairingIdRef.current;
           socket.emit('confirm_pairing', { pairingId: activePairingId });
           emitSocket('confirm_pairing', { pairingId: activePairingId });
@@ -1202,8 +1260,16 @@ export default function App() {
       {scannerOpen && (
         <QRScannerModal
           isOpen={scannerOpen}
-          onResult={handleScanResult}
-          onScanSuccess={handleScanResult}
+          onResult={(scannedPin) => {
+            setScannerOpen(false);
+            console.log('[Scanner 🎯] Auto-connecting with PIN/result:', scannedPin);
+            handleJoinWithPin(scannedPin);
+          }}
+          onScanSuccess={(scannedPin) => {
+            setScannerOpen(false);
+            console.log('[Scanner 🎯] Auto-connecting with PIN:', scannedPin);
+            handleJoinWithPin(scannedPin);
+          }}
           onClose={() => setScannerOpen(false)}
         />
       )}

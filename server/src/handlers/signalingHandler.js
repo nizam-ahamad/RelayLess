@@ -165,8 +165,18 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
     const handlePairingResponse = (payload = {}) => {
       try {
         const pairing = peerManager.getPairing(payload.pairingId);
-        if (pairing) {
-          pairing.confirmations = (pairing.confirmations || 0) + 1;
+        if (!pairing) {
+          throw new Error('That pairing request is no longer active.');
+        }
+
+        if (!pairing.confirmedSockets) {
+          pairing.confirmedSockets = new Set();
+        }
+
+        if (payload.accepted) {
+          pairing.confirmedSockets.add(socket.id);
+          // Notify the clicking device that it is waiting for peer
+          socket.emit('confirmation_received', { status: 'waiting_for_peer' });
         }
 
         const result = peerManager.respondToPairing(
@@ -190,7 +200,8 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           return;
         }
 
-        if (!result.acceptedByBoth && (pairing?.confirmations ?? 0) < 2) {
+        // ONLY advance when BOTH distinct sockets have confirmed
+        if (!result.acceptedByBoth || pairing.confirmedSockets.size < 2) {
           const otherSocketId = peerManager.otherSocketId(payload.pairingId, socket.id);
           if (otherSocketId) {
             io.to(otherSocketId).emit('pairing_acknowledged', {
@@ -202,6 +213,9 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           }
           return;
         }
+
+        // Clean up confirmation state once both accepted
+        pairing.confirmedSockets.clear();
 
         const activePairing = result.pairing || pairing;
         const requester = participants.requester;

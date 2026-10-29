@@ -1,6 +1,21 @@
 import React, { useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 
+// Safely parse 6-character alphanumeric PIN from raw string or URL
+export function extractPin(text) {
+  if (!text) return '';
+  const trimmed = text.trim();
+  // Check if it's a URL with query param ?pin=XXXXXX or #pin=XXXXXX
+  const urlMatch = trimmed.match(/[?&#]pin=([A-Za-z0-9]{6})/i);
+  if (urlMatch) return urlMatch[1].toUpperCase();
+
+  // Check for any standalone 6-character alphanumeric token
+  const tokenMatch = trimmed.match(/\b([A-Za-z0-9]{6})\b/);
+  if (tokenMatch) return tokenMatch[1].toUpperCase();
+
+  return trimmed.slice(0, 6).toUpperCase();
+}
+
 export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResult }) {
   const scannerRef = useRef(null);
   const isStoppingRef = useRef(false);
@@ -46,21 +61,14 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
         if (isStoppingRef.current) return;
         isStoppingRef.current = true;
 
-        // Parse 6-character PIN
-        const match = decodedText.match(/(?:pin=|^)([A-Z0-9]{6})/i);
-        const pin = match ? match[1].toUpperCase() : decodedText.trim().toUpperCase();
-
+        const pin = extractPin(decodedText);
         await stopHardwareCamera();
-
-        // Small delay to allow React DOM to settle before opening verification modal
-        setTimeout(() => {
-          onClose();
-          if (onScanSuccess) {
-            onScanSuccess(pin);
-          } else if (onResult) {
-            onResult(pin);
-          }
-        }, 60);
+        onClose();
+        if (onScanSuccess) {
+          onScanSuccess(pin || decodedText);
+        } else if (onResult) {
+          onResult(pin || decodedText);
+        }
       },
       () => {} // Ignore continuous scan misses
     ).catch((err) => {
