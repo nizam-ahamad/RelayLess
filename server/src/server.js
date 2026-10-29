@@ -18,6 +18,7 @@ const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const port = Number(process.env.PORT ?? 3001);
 const pinTtlMs = Number(process.env.PIN_TTL_MS ?? 120_000);
 const isProduction = process.env.NODE_ENV === 'production';
+const BUILD_VERSION = process.env.RENDER_GIT_COMMIT || `build_${Date.now()}`;
 
 // Parse configured origins from environment (comma-delimited)
 const configuredOrigins = String(process.env.CLIENT_ORIGIN ?? '')
@@ -118,6 +119,13 @@ app.get('/health', (_request, response) => {
   response.status(200).json({ ok: true });
 });
 
+app.get('/api/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.json({ version: BUILD_VERSION });
+});
+
 app.get('/api/webrtc-config', async (_req, res) => {
   const appName = process.env.METERED_APP_NAME;
   const apiKey = process.env.METERED_API_KEY;
@@ -169,13 +177,12 @@ app.use('/assets', (req, res) => {
 app.use(express.static(clientDistPath));
 
 app.get('*', (req, res, next) => {
-  // Let API requests pass through
   if (req.path.startsWith('/api')) {
     return next();
   }
 
-  // Force browsers to always fetch fresh index.html with new asset hashes
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  // Never cache index.html so script hash tags are always fresh
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.sendFile(path.join(clientDistPath, 'index.html'));

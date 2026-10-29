@@ -87,6 +87,63 @@ export default function App() {
   const handleFilesRef = useRef(null);
   const pairPeerId = useMemo(() => new URLSearchParams(window.location.search).get('pair'), []);
   const autoPairRequestedRef = useRef(false);
+  const currentVersionRef = useRef(null);
+  const isTransferringRef = useRef(false);
+
+  // Keep isTransferringRef synced with active file transfer state
+  useEffect(() => {
+    isTransferringRef.current = (step === 'transfer');
+  }, [step]);
+
+  useEffect(() => {
+    const checkForNewVersion = async () => {
+      // Never interrupt an active file transfer
+      if (isTransferringRef.current) return;
+
+      try {
+        const res = await fetch(`/api/version?_t=${Date.now()}`, {
+          cache: 'no-store'
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!data?.version) return;
+
+        if (!currentVersionRef.current) {
+          // Record initial version on boot
+          currentVersionRef.current = data.version;
+        } else if (currentVersionRef.current !== data.version) {
+          console.log('[App 🔄] New code deployment detected! Syncing tab...');
+          // Force clean reload bypassing cache
+          window.location.reload();
+        }
+      } catch (err) {
+        // Ignore background network blips
+      }
+    };
+
+    // 1. Initial check
+    checkForNewVersion();
+
+    // 2. Poll every 30 seconds when tab is open
+    const intervalId = setInterval(checkForNewVersion, 30000);
+
+    // 3. Check immediately when user switches back to the tab or unlocks phone
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkForNewVersion();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', checkForNewVersion);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', checkForNewVersion);
+    };
+  }, []);
 
   useEffect(() => {
     // Purge any stored session keys on fresh boot
