@@ -55,6 +55,7 @@ export default function App() {
   const setIsDataChannelReady = setIsChannelReady;
 
   const displayCode = verificationCode ? String(verificationCode).padStart(2, '0') : '--';
+  const peerNickname = selectedPeer?.deviceName || selectedPeer?.partnerName || prompt?.otherDeviceName || prompt?.deviceName || 'device';
   const sessionRef = useRef(null);
   const transferAbortRef = useRef(null);
   const receiverRef = useRef(null);
@@ -1137,19 +1138,19 @@ export default function App() {
                 </div>
                 <h2>
                   {isChannelReady
-                    ? 'Ready to move files — Connected directly to peer'
-                    : 'Connecting encrypted peer-to-peer bridge...'}
+                    ? 'Ready to move files'
+                    : 'Establishing encrypted peer-to-peer bridge...'}
                 </h2>
                 <p className="muted">
                   {isChannelReady
                     ? `Connected directly to ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'the other device'}. The signaling server is no longer involved in your transfer.`
-                    : 'Connecting encrypted peer-to-peer bridge...'}
+                    : 'Establishing encrypted peer-to-peer bridge...'}
                 </p>
                 {!isChannelReady && (
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.25)' }}>
                     <div className="pulse-dot" style={{ margin: 0 }} />
                     <span style={{ fontSize: '12px', color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>
-                      Connecting encrypted peer-to-peer bridge...
+                      Establishing encrypted peer-to-peer bridge...
                     </span>
                   </div>
                 )}
@@ -1178,17 +1179,21 @@ export default function App() {
       </main>
 
       <ConfirmationModal
-        isOpen={showConfirmationModal || step === 'verify'}
+        isOpen={showConfirmationModal}
         code={verificationCode}
-        verificationCode={verificationCode}
-        rawCode={verificationCode}
-        displayCode={displayCode}
-        prompt={prompt}
-        hasAccepted={waitingForAcceptance}
-        onConfirm={handleAllowConnection}
-        onAccept={handleAllowConnection}
-        onClose={handleRejectConnection}
-        onReject={handleRejectConnection}
+        peerNickname={peerNickname}
+        onClose={() => {
+          setShowConfirmationModal(false);
+          const activePairingId = pairingId || currentPairingIdRef.current;
+          socket.emit('reject_pairing', { pairingId: activePairingId });
+          emitSocket('reject_pairing', { pairingId: activePairingId });
+        }}
+        onConfirm={() => {
+          setShowConfirmationModal(false);
+          const activePairingId = pairingId || currentPairingIdRef.current;
+          socket.emit('confirm_pairing', { pairingId: activePairingId });
+          emitSocket('confirm_pairing', { pairingId: activePairingId });
+        }}
       />
       <IncomingFileModal
         transfer={incomingTransfer}

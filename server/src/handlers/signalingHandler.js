@@ -255,7 +255,8 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
         // Also broadcast start_transfer_session to session room/id
         io.to(pId).emit('start_transfer_session', {
           pairingId: pId,
-          initiatorId: initiatorSocketId
+          initiatorId: initiatorSocketId,
+          hostSocketId: initiatorSocketId
         });
 
         // Also emit pairing_confirmed for backwards compatibility
@@ -279,6 +280,9 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
     socket.on('pairing_response', handlePairingResponse);
     socket.on('confirm_pairing', (payload = {}) => {
       handlePairingResponse({ ...payload, accepted: true });
+    });
+    socket.on('reject_pairing', (payload = {}) => {
+      handlePairingResponse({ ...payload, accepted: false });
     });
 
     socket.on('pairing_cancel', (payload = {}) => {
