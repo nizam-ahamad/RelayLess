@@ -554,10 +554,10 @@ export default function App() {
       connectionTimeoutRef.current = setTimeout(() => {
         const channel = sessionRef.current?.dataChannel;
         if (!channel || channel.readyState !== 'open') {
-          console.warn('[WebRTC] Connection watchdog timed out after 25 seconds');
+          console.warn('[WebRTC] Connection watchdog timed out after 60 seconds');
           closeSession('Connection timed out. Could not establish P2P bridge with other device.');
         }
-      }, 25000);
+      }, 60000);
 
       await startWebRtc({
         role,
@@ -739,7 +739,7 @@ export default function App() {
         return;
       }
       setPinError(false);
-      emitSocket('join_session', { pin: normalized, deviceName });
+      socket.emit('request_pairing', { pin: normalized, deviceName });
       emitSocket('request_pairing', {
         pin: normalized,
         deviceName
@@ -754,7 +754,7 @@ export default function App() {
         showNotice('error', 'You cannot connect to your own device. Please enter the PIN shown on the other screen.');
         return;
       }
-      emitSocket('join_session', { targetPeerId: scannedTargetPeerId, deviceName });
+      socket.emit('request_pairing', { targetPeerId: scannedTargetPeerId, deviceName });
       emitSocket('request_pairing', {
         targetPeerId: scannedTargetPeerId,
         deviceName
@@ -1178,21 +1178,23 @@ export default function App() {
         </footer>
       </main>
 
+      {/* Global Confirmation Modal: Rendered for BOTH Host and Joiner */}
       <ConfirmationModal
         isOpen={showConfirmationModal}
         code={verificationCode}
+        verificationCode={verificationCode}
         peerNickname={peerNickname}
-        onClose={() => {
-          setShowConfirmationModal(false);
-          const activePairingId = pairingId || currentPairingIdRef.current;
-          socket.emit('reject_pairing', { pairingId: activePairingId });
-          emitSocket('reject_pairing', { pairingId: activePairingId });
-        }}
         onConfirm={() => {
           setShowConfirmationModal(false);
           const activePairingId = pairingId || currentPairingIdRef.current;
           socket.emit('confirm_pairing', { pairingId: activePairingId });
           emitSocket('confirm_pairing', { pairingId: activePairingId });
+        }}
+        onClose={() => {
+          setShowConfirmationModal(false);
+          const activePairingId = pairingId || currentPairingIdRef.current;
+          socket.emit('reject_pairing', { pairingId: activePairingId });
+          emitSocket('reject_pairing', { pairingId: activePairingId });
         }}
       />
       <IncomingFileModal

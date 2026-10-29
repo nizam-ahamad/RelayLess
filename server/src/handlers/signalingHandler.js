@@ -65,6 +65,28 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           return;
         }
 
+        if (initiatorPeer?.pairingId) {
+          const existing = peerManager.getPairing(initiatorPeer.pairingId);
+          if (existing && targetPeer && (existing.targetSocketId === targetPeer.socketId || existing.requesterSocketId === targetPeer.socketId)) {
+            const formattedCode = String(existing.confirmationCode ?? existing.verificationCode ?? '00').padStart(2, '0');
+            const pId = existing.pairingId || existing.id;
+            const sessionPayload = {
+              pairingId: pId,
+              id: pId,
+              verificationCode: formattedCode,
+              confirmationCode: formattedCode,
+              code: formattedCode
+            };
+            socket.emit('session_matched', {
+              ...sessionPayload,
+              role: 'receiver',
+              otherDeviceName: targetPeer.deviceName
+            });
+            acknowledgement?.({ ok: true, pairingId: pId, code: formattedCode, verificationCode: formattedCode });
+            return;
+          }
+        }
+
         const pairing = peerManager.createPairing(initiatorPeer, targetPeer);
         rateLimiter.recordSuccess(...rateLimitKeys);
 
@@ -142,6 +164,11 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
 
     const handlePairingResponse = (payload = {}) => {
       try {
+        const pairing = peerManager.getPairing(payload.pairingId);
+        if (pairing) {
+          pairing.confirmations = (pairing.confirmations || 0) + 1;
+        }
+
         const result = peerManager.respondToPairing(
           payload.pairingId,
           socket.id,
@@ -163,7 +190,7 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           return;
         }
 
-        if (!result.acceptedByBoth) {
+        if (!result.acceptedByBoth && (pairing?.confirmations ?? 0) < 2) {
           const otherSocketId = peerManager.otherSocketId(payload.pairingId, socket.id);
           if (otherSocketId) {
             io.to(otherSocketId).emit('pairing_acknowledged', {
@@ -176,11 +203,11 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           return;
         }
 
-        const pairing = result.pairing;
+        const activePairing = result.pairing || pairing;
         const requester = participants.requester;
         const target = participants.target;
-        const initiatorSocketId = pairing.initiatorSocketId || pairing.requesterSocketId;
-        const targetSocketId = pairing.targetSocketId;
+        const initiatorSocketId = activePairing.initiatorSocketId || activePairing.requesterSocketId;
+        const targetSocketId = activePairing.targetSocketId;
 
         const getSocket = (socketId) => {
           if (!socketId) return null;
@@ -201,8 +228,10 @@ export function registerSignalingHandlers(io, peerManager, rateLimiter = new Pai
           targetSocket.data = targetSocket.data || {};
           initiatorSocket.data.partnerSocketId = targetSocket.id;
           targetSocket.data.partnerSocketId = initiatorSocket.id;
-          initiatorSocket.data.pairingId = pairing.id || pairing.pairingId;
-          targetSocket.data.pairingId = pairing.id || pairing.pairingId;
+          initiatorSocket.data.pairingId = activePairing.id || activePairing.pairingId;
+          targetSocket.data.pairingId = activePairing.id || activePairing.pairingId;
+          initiatorSocket.join?.(activePairing.id || activePairing.pairingId);
+          targetSocket.join?.(activePairing.id || activePairing.pairingId);
         }
 
         const pId = pairing.id || pairing.pairingId;

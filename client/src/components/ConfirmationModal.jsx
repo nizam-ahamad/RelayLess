@@ -8,7 +8,7 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 modal-backdrop"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       style={{
         position: 'fixed',
         inset: 0,
@@ -22,7 +22,7 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
       }}
     >
       <div
-        className="relative w-full max-w-sm rounded-2xl bg-slate-900 p-6 border border-slate-800 text-center shadow-2xl modal-card"
+        className="relative w-full max-w-sm rounded-2xl bg-slate-900 p-6 border border-slate-800 text-center shadow-2xl"
         style={{
           position: 'relative',
           width: '100%',

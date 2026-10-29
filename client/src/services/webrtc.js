@@ -6,7 +6,7 @@ let dataChannel = null;
 let candidateQueue = [];
 let isSettingRemote = false;
 
-export const STATIC_ICE_SERVERS = [
+export const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.relay.metered.ca:80' },
@@ -32,10 +32,10 @@ export const STATIC_ICE_SERVERS = [
   }
 ];
 
-export const ICE_SERVERS = STATIC_ICE_SERVERS;
+export const STATIC_ICE_SERVERS = ICE_SERVERS;
 
 export function getIceServers() {
-  return STATIC_ICE_SERVERS;
+  return ICE_SERVERS;
 }
 
 export const CHUNK_SIZE = 16384; // 16 KB strict limit for mobile cellular/TURN SCTP
@@ -113,11 +113,12 @@ export async function initWebRTCSession({ role, socket = defaultSocket, pairingI
     }
   };
 
-  // Tolerant ICE connection monitoring (do NOT fail on temporary 'disconnected')
+  // Do not prematurely abort on transient states
   pc.oniceconnectionstatechange = () => {
-    console.log('[WebRTC 📡] ICE Connection State:', pc.iceConnectionState);
+    console.log('[WebRTC 📡] ICE State:', pc.iceConnectionState);
+    // Only trigger error on fatal failure, never on 'disconnected'
     if (pc.iceConnectionState === 'failed') {
-      console.error('[WebRTC ❌] ICE connection permanently failed');
+      console.error('[WebRTC ❌] ICE connection failed completely');
       if (onError) onError(new Error('WebRTC failed to establish network route.'));
     }
   };
