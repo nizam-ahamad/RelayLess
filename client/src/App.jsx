@@ -1364,7 +1364,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <button className="button button-secondary bg-[#282a2c] hover:bg-[#333537] border-[#3c4043] text-[#c4c7c5] hover:text-white" type="button" onClick={() => {
+              <button className="button button-secondary bg-[#282a2c] hover:bg-[#333537] border-[#3c4043] text-[#c4c7c5] hover:text-[#e3e3e3]" type="button" onClick={() => {
                 if (currentPairingIdRef.current) {
                   emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
                 }

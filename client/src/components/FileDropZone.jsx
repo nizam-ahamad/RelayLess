@@ -11,7 +11,7 @@ export default function FileDropZone({ onFiles, disabled }) {
 
   return (
     <div
-      className={`drop-zone bg-[#131314]/50 border-[#3c4043] hover:border-[#a8c7fa] cursor-pointer ${disabled ? 'is-disabled' : ''}`}
+      className={`drop-zone bg-[#131314]/60 border-[#3c4043] hover:border-[#a8c7fa] cursor-pointer ${disabled ? 'is-disabled' : ''}`}
       onClick={() => {
         if (!disabled) {
           fileInputRef.current?.click();
