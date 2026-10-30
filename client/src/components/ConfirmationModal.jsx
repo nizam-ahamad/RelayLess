@@ -19,7 +19,7 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
       style={{
         position: 'fixed',
         inset: 0,
@@ -27,40 +27,40 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
         backdropFilter: 'blur(4px)',
         padding: '1rem'
       }}
     >
       <div
-        className="relative w-full max-w-sm rounded-2xl bg-slate-900 p-6 border border-slate-800 text-center shadow-2xl"
+        className="relative w-full max-w-sm rounded-2xl bg-[#1e1f20] p-6 border border-[#333537] text-center shadow-2xl"
         style={{
           position: 'relative',
           width: '100%',
           maxWidth: '384px',
           borderRadius: '16px',
-          backgroundColor: '#0f172a',
+          backgroundColor: '#1e1f20',
           padding: '1.5rem',
-          border: '1px solid #1e293b',
+          border: '1px solid #333537',
           textAlign: 'center',
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
         }}
       >
         <span
-          className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 modal-eyebrow"
-          style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#34d399' }}
+          className="text-[11px] font-bold uppercase tracking-wider text-[#a8c7fa] modal-eyebrow"
+          style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#a8c7fa' }}
         >
           Mutual Confirmation
         </span>
         <h3
-          className="text-xl font-bold text-white mt-1 mb-2"
-          style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff', marginTop: '0.25rem', marginBottom: '0.5rem' }}
+          className="text-xl font-bold text-[#e3e3e3] mt-1 mb-2"
+          style={{ fontSize: '1.25rem', fontWeight: 700, color: '#e3e3e3', marginTop: '0.25rem', marginBottom: '0.5rem' }}
         >
           Connect {peerNickname || 'device'}?
         </h3>
         <p
-          className="text-xs text-slate-400 mb-6 muted"
-          style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '1.5rem' }}
+          className="text-xs text-[#9aa0a6] mb-6 muted"
+          style={{ fontSize: '0.75rem', color: '#9aa0a6', marginBottom: '1.5rem' }}
         >
           Compare this code on both screens before allowing the connection.
         </p>
@@ -70,39 +70,39 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
           style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', margin: '1rem 0' }}
         >
           <div
-            className="w-14 h-16 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-3xl font-mono font-bold text-amber-400"
+            className="w-14 h-16 rounded-xl bg-[#131314] border border-[#3c4043] flex items-center justify-center text-3xl font-mono font-bold text-[#a8c7fa]"
             style={{
               width: '3.5rem',
               height: '4rem',
               borderRadius: '12px',
-              backgroundColor: 'rgba(30, 41, 59, 0.8)',
-              border: '1px solid #334155',
+              backgroundColor: '#131314',
+              border: '1px solid #3c4043',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '1.875rem',
               fontFamily: 'monospace',
               fontWeight: 700,
-              color: '#fbbf24'
+              color: '#a8c7fa'
             }}
           >
             {codeStr[0]}
           </div>
           <div
-            className="w-14 h-16 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-3xl font-mono font-bold text-amber-400"
+            className="w-14 h-16 rounded-xl bg-[#131314] border border-[#3c4043] flex items-center justify-center text-3xl font-mono font-bold text-[#a8c7fa]"
             style={{
               width: '3.5rem',
               height: '4rem',
               borderRadius: '12px',
-              backgroundColor: 'rgba(30, 41, 59, 0.8)',
-              border: '1px solid #334155',
+              backgroundColor: '#131314',
+              border: '1px solid #3c4043',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '1.875rem',
               fontFamily: 'monospace',
               fontWeight: 700,
-              color: '#fbbf24'
+              color: '#a8c7fa'
             }}
           >
             {codeStr[1]}
@@ -110,8 +110,8 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
         </div>
 
         <p
-          className="text-[11px] text-slate-400 mb-6 muted small"
-          style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '1.5rem' }}
+          className="text-[11px] text-[#9aa0a6] mb-6 muted small"
+          style={{ fontSize: '11px', color: '#9aa0a6', marginBottom: '1.5rem' }}
         >
           {isWaitingPeer ? "Waiting for the other device to accept..." : "Both people must accept to begin the encrypted WebRTC handshake."}
         </p>
@@ -124,13 +124,13 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
             type="button"
             onClick={onClose}
             disabled={isWaitingPeer}
-            className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-semibold text-slate-300 transition-colors disabled:opacity-50 button button-secondary"
+            className="flex-1 py-3 rounded-xl bg-[#282a2c] hover:bg-[#333537] text-sm font-semibold text-[#c4c7c5] transition-colors disabled:opacity-50 button button-secondary"
             style={{
               flex: 1,
               padding: '0.75rem 0',
               borderRadius: '12px',
-              backgroundColor: '#1e293b',
-              color: '#cbd5e1',
+              backgroundColor: '#282a2c',
+              color: '#c4c7c5',
               fontSize: '0.875rem',
               fontWeight: 600,
               border: 'none',
@@ -144,13 +144,13 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
             type="button"
             onClick={handleAllow}
             disabled={isWaitingPeer}
-            className="flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold text-slate-950 transition-colors shadow-lg shadow-emerald-500/20 disabled:opacity-75 flex items-center justify-center gap-2 button button-primary"
+            className="flex-1 py-3 rounded-xl bg-[#a8c7fa] hover:bg-[#c2e7ff] text-sm font-semibold text-[#041e49] transition-colors shadow-lg disabled:opacity-75 flex items-center justify-center gap-2 button button-primary"
             style={{
               flex: 1,
               padding: '0.75rem 0',
               borderRadius: '12px',
-              backgroundColor: '#10b981',
-              color: '#020617',
+              backgroundColor: '#a8c7fa',
+              color: '#041e49',
               fontSize: '0.875rem',
               fontWeight: 600,
               border: 'none',
@@ -165,7 +165,7 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm, code, ve
             {isWaitingPeer ? (
               <>
                 <svg
-                  className="animate-spin h-4 w-4 text-slate-950"
+                  className="animate-spin h-4 w-4 text-[#041e49]"
                   style={{ width: '1rem', height: '1rem', animation: 'spin 1s linear infinite' }}
                   viewBox="0 0 24 24"
                   fill="none"

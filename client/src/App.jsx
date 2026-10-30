@@ -1124,13 +1124,13 @@ export default function App() {
   const isBusy = ['requesting', 'pairing', 'connecting-peer', 'connecting'].includes(connectionState);
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
+    <div className="app-shell bg-[#131314]">
+      <header className="topbar bg-[#131314]/90 border-b border-[#282a2c]">
         <div className="brand-lockup">
           <div className="brand-mark"><span /><span /></div>
           <div>
-            <div className="brand-name">relayless</div>
-            <div className="brand-tagline">private device-to-device sharing</div>
+            <div className="brand-name text-[#e3e3e3]">relayless</div>
+            <div className="brand-tagline text-[#75777a]">private device-to-device sharing</div>
           </div>
         </div>
         <div className={`status-pill status-${connectionState}`}>
@@ -1149,19 +1149,19 @@ export default function App() {
 
       <main className="main-content">
         <div className="max-w-6xl mx-auto px-4 pt-4 pb-2 text-center md:text-left">
-          <div className="text-[10px] tracking-widest text-emerald-400 font-bold mb-1 uppercase font-mono">
+          <div className="text-[10px] tracking-widest text-[#a8c7fa] font-bold mb-1 uppercase font-mono">
             NO UPLOAD. NO STORAGE. NO MIDDLEMAN.
           </div>
-          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight mb-2">
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black text-[#e3e3e3] tracking-tight leading-tight mb-2">
             Move the big stuff without the detour.
           </h1>
-          <p className="text-xs md:text-sm text-slate-400 mb-3 max-w-2xl leading-relaxed">
+          <p className="text-xs md:text-sm text-[#9aa0a6] mb-3 max-w-2xl leading-relaxed">
             Relayless builds a private encrypted bridge between your browsers. Your files travel directly from one device to the other.
           </p>
-          <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-[11px] text-slate-400 mb-2">
-            <span><i className="text-emerald-400 not-italic mr-1.5 font-bold">↔</i> Peer-to-peer WebRTC</span>
-            <span><i className="text-emerald-400 not-italic mr-1.5 font-bold">◌</i> Streamed, not buffered</span>
-            <span><i className="text-emerald-400 not-italic mr-1.5 font-bold">▣</i> Up to 30 GB+</span>
+          <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-[11px] text-[#9aa0a6] mb-2">
+            <span className="bg-[#1e1f20] border border-[#333537] text-[#c4c7c5] px-2.5 py-0.5 rounded-full"><i className="text-[#a8c7fa] not-italic mr-1.5 font-bold">↔</i> Peer-to-peer WebRTC</span>
+            <span className="bg-[#1e1f20] border border-[#333537] text-[#c4c7c5] px-2.5 py-0.5 rounded-full"><i className="text-[#a8c7fa] not-italic mr-1.5 font-bold">◌</i> Streamed, not buffered</span>
+            <span className="bg-[#1e1f20] border border-[#333537] text-[#c4c7c5] px-2.5 py-0.5 rounded-full"><i className="text-[#a8c7fa] not-italic mr-1.5 font-bold">▣</i> Up to 30 GB+</span>
           </div>
         </div>
 
@@ -1215,15 +1215,15 @@ export default function App() {
           <div className="max-w-6xl mx-auto px-4 pb-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
               {/* Card #1: Show your door */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 md:p-6 flex flex-col justify-between shadow-xl">
+              <div className="bg-[#1e1f20] border border-[#333537] rounded-2xl p-5 md:p-6 flex flex-col justify-between shadow-xl">
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-mono text-cyan-400 font-semibold tracking-wider">01 / YOUR DEVICE</span>
+                    <span className="text-[11px] font-mono text-[#a8c7fa] font-semibold tracking-wider">01 / YOUR DEVICE</span>
                     <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> LIVE
                     </span>
                   </div>
-                  <h2 className="text-xl font-bold text-white mb-4">Show your door</h2>
+                  <h2 className="text-xl font-bold text-[#e3e3e3] mb-4">Show your door</h2>
 
                   {/* QR & Details Row */}
                   <div className="flex flex-col sm:flex-row items-center gap-4">
@@ -1236,47 +1236,48 @@ export default function App() {
 
                     <div className="flex-1 w-full space-y-3">
                       <div>
-                        <label className="text-[10px] font-mono text-slate-400 uppercase">Device Nickname</label>
+                        <label className="text-[10px] font-mono text-[#9aa0a6] uppercase">Device Nickname</label>
                         <input
                           type="text"
                           value={deviceName}
                           maxLength={80}
                           onChange={(e) => setDeviceName(e.target.value)}
-                          className="w-full mt-1 px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500"
+                          placeholder="My device"
+                          className="w-full mt-1 px-3 py-1.5 rounded-lg bg-[#131314] border border-[#3c4043] text-sm text-[#e3e3e3] placeholder-[#75777a] focus:outline-none focus:border-[#a8c7fa]"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-mono text-slate-400 uppercase">Your PIN</label>
-                        <div className="text-2xl font-mono font-black text-amber-400 tracking-wider">
+                        <label className="text-[10px] font-mono text-[#9aa0a6] uppercase">Your PIN</label>
+                        <div className="text-2xl font-mono font-black text-[#fdd663] tracking-wider">
                           {peer?.pin || '------'}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <div className="ring" style={{ '--progress': `${rotateProgress}%` }}><span>{pinSeconds}s</span></div>
-                          <span className="text-[10px] text-slate-500">Refreshes every 2 minutes</span>
+                          <span className="text-[10px] text-[#75777a]">Refreshes every 2 minutes</span>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-500 mt-4">This PIN is temporary and only used to introduce devices.</p>
+                <p className="text-[10px] text-[#75777a] mt-4">This PIN is temporary and only used to introduce devices.</p>
               </div>
 
               {/* Card #2: Open a door */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 md:p-6 flex flex-col justify-between shadow-xl">
+              <div className="bg-[#1e1f20] border border-[#333537] rounded-2xl p-5 md:p-6 flex flex-col justify-between shadow-xl">
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-mono text-cyan-400 font-semibold tracking-wider">02 / OTHER DEVICE</span>
-                    <span className="text-[11px] font-mono text-slate-500">02</span>
+                    <span className="text-[11px] font-mono text-[#a8c7fa] font-semibold tracking-wider">02 / OTHER DEVICE</span>
+                    <span className="text-[11px] font-mono text-[#75777a]">02</span>
                   </div>
-                  <h2 className="text-xl font-bold text-white mb-1">Open a door</h2>
-                  <p className="text-xs text-slate-400 mb-4">
+                  <h2 className="text-xl font-bold text-[#e3e3e3] mb-1">Open a door</h2>
+                  <p className="text-xs text-[#9aa0a6] mb-4">
                     Enter the six-character PIN shown on the other device, or scan its QR code.
                   </p>
 
                   {/* PIN Input & Connect Button */}
                   <div className="space-y-3">
                     <div>
-                      <label className="text-[10px] font-mono text-slate-400 uppercase">Enter Pairing PIN</label>
+                      <label className="text-[10px] font-mono text-[#9aa0a6] uppercase">Enter Pairing PIN</label>
                       <div className="flex gap-2 mt-1">
                         <input
                           type="text"
@@ -1294,23 +1295,23 @@ export default function App() {
                           }}
                           placeholder="ABC123"
                           disabled={isBusy}
-                          className="flex-1 px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-lg font-mono tracking-widest text-white uppercase focus:outline-none focus:border-cyan-500"
+                          className="flex-1 px-3 py-2 rounded-xl bg-[#131314] border border-[#3c4043] text-lg font-mono tracking-widest text-[#e3e3e3] placeholder-[#75777a] uppercase focus:outline-none focus:border-[#a8c7fa]"
                         />
                         <button
                           type="button"
                           onClick={() => handleJoinWithPin(pinInput)}
                           disabled={isBusy || !pinInput.trim()}
-                          className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-sm transition-colors"
+                          className="px-5 py-2 rounded-xl bg-[#e3e3e3] hover:bg-white text-[#131314] font-bold text-sm transition-colors"
                         >
                           Connect
                         </button>
                       </div>
-                      {pinError && <div className="error-text mt-1 text-xs text-red-400">{pinError}</div>}
+                      {pinError && <div className="error-text mt-1 text-xs text-[#f28b82]">{pinError}</div>}
                     </div>
 
                     <div className="relative flex items-center justify-center my-3">
-                      <div className="border-t border-slate-800 w-full"></div>
-                      <span className="bg-slate-900 px-2 text-[10px] text-slate-500 uppercase font-mono absolute">or</span>
+                      <div className="border-t border-[#333537] w-full"></div>
+                      <span className="bg-[#1e1f20] px-2 text-[10px] text-[#75777a] uppercase font-mono absolute">or</span>
                     </div>
 
                     {/* Camera Scanner Button */}
@@ -1318,52 +1319,52 @@ export default function App() {
                       type="button"
                       onClick={() => setScannerOpen(true)}
                       disabled={isBusy}
-                      className="w-full py-2.5 px-4 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-between text-xs font-medium transition-colors"
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#282a2c] hover:bg-[#333537] border border-[#3c4043] text-[#e3e3e3] flex items-center justify-between text-xs font-medium transition-colors"
                     >
                       <div className="flex items-center gap-2">
-                        <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-4 text-[#a8c7fa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
                         </svg>
                         <span>Scan QR code</span>
                       </div>
-                      <span className="text-slate-500 text-[10px]">Instant connect →</span>
+                      <span className="text-[#75777a] text-[10px]">Instant connect →</span>
                     </button>
                   </div>
                 </div>
 
-                <p className="text-[10px] text-slate-500 mt-4">You will both confirm a matching code before anything connects.</p>
+                <p className="text-[10px] text-[#75777a] mt-4">You will both confirm a matching code before anything connects.</p>
               </div>
             </div>
           </div>
         )}
 
         {step === 'transfer' && connectionState !== 'failed' && (
-          <section className="connected-view">
+          <section className="connected-view bg-[#1e1f20] border border-[#333537]">
             <div className="connected-header">
               <div>
-                <div className="section-kicker">
+                <div className="section-kicker text-[#a8c7fa]">
                   {isChannelReady ? 'Secure bridge established' : 'Direct Link Negotiation'}
                 </div>
-                <h2>
+                <h2 className="text-[#e3e3e3]">
                   {isChannelReady
                     ? 'Ready to move files'
                     : 'Establishing encrypted peer-to-peer bridge...'}
                 </h2>
-                <p className="muted">
+                <p className="muted text-[#9aa0a6]">
                   {isChannelReady
                     ? `Connected directly to ${selectedPeer?.deviceName || selectedPeer?.partnerName || 'the other device'}. The signaling server is no longer involved in your transfer.`
                     : 'Establishing encrypted peer-to-peer bridge...'}
                 </p>
                 {!isChannelReady && (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(85, 214, 190, 0.08)', border: '1px solid rgba(85, 214, 190, 0.25)' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '8px 16px', borderRadius: '999px', background: 'rgba(168, 199, 250, 0.08)', border: '1px solid rgba(168, 199, 250, 0.25)' }}>
                     <div className="pulse-dot" style={{ margin: 0 }} />
-                    <span style={{ fontSize: '12px', color: 'var(--mint)', fontFamily: 'DM Mono, monospace' }}>
+                    <span style={{ fontSize: '12px', color: '#a8c7fa', fontFamily: 'DM Mono, monospace' }}>
                       Establishing encrypted peer-to-peer bridge...
                     </span>
                   </div>
                 )}
               </div>
-              <button className="button button-secondary" type="button" onClick={() => {
+              <button className="button button-secondary bg-[#282a2c] hover:bg-[#333537] border-[#3c4043] text-[#c4c7c5] hover:text-white" type="button" onClick={() => {
                 if (currentPairingIdRef.current) {
                   emitSocket('pairing_cancel', { pairingId: currentPairingIdRef.current });
                 }
@@ -1379,8 +1380,8 @@ export default function App() {
               <div
                 className={`mt-6 w-full rounded-2xl border p-5 transition-all duration-500 ${
                   transferProgress === 100
-                    ? 'bg-slate-900/90 border-emerald-500/40 shadow-xl shadow-emerald-500/10'
-                    : 'bg-slate-900/60 border-slate-800'
+                    ? 'bg-[#1e1f20] border-[#81c995]/40 shadow-xl shadow-emerald-500/10'
+                    : 'bg-[#1e1f20] border-[#333537]'
                 }`}
               >
                 {/* File Info Row */}
@@ -1391,15 +1392,15 @@ export default function App() {
                       className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors duration-500 ${
                         transferProgress === 100
                           ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                          : 'bg-cyan-500/10 text-[#a8c7fa] border border-[#a8c7fa]/20'
                       }`}
                     >
                       {transferProgress === 100 ? (
-                        <svg className="w-6 h-6 animate-in zoom-in-75 duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-6 h-6 animate-in zoom-in-75 duration-300 text-[#81c995]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                         </svg>
                       ) : (
-                        <svg className="w-5 h-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-5 h-5 animate-pulse text-[#a8c7fa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                         </svg>
                       )}
@@ -1407,12 +1408,12 @@ export default function App() {
 
                     {/* Filename & Meta */}
                     <div className="min-w-0">
-                      <h4 className="text-sm font-semibold text-white truncate max-w-[280px] sm:max-w-md">
+                      <h4 className="text-sm font-semibold text-[#e3e3e3] truncate max-w-[280px] sm:max-w-md">
                         {activeFile.name}
                       </h4>
-                      <p className="text-xs text-slate-400 mt-0.5">
+                      <p className="text-xs text-[#9aa0a6] mt-0.5">
                         {formatBytes(activeFile.size)} ·{' '}
-                        <span className={transferProgress === 100 ? 'text-emerald-400 font-medium' : 'text-slate-400'}>
+                        <span className={transferProgress === 100 ? 'text-[#81c995] font-medium' : 'text-[#9aa0a6]'}>
                           {transferProgress === 100
                             ? (transfer?.direction === 'sending' || role === 'initiator'
                                 ? 'Successfully delivered to peer'
@@ -1429,7 +1430,7 @@ export default function App() {
                   <div className="text-right shrink-0">
                     <span
                       className={`text-base font-mono font-bold tracking-tight ${
-                        transferProgress === 100 ? 'text-emerald-400' : 'text-slate-300'
+                        transferProgress === 100 ? 'text-[#81c995]' : 'text-[#c4c7c5]'
                       }`}
                     >
                       {transferProgress}%
@@ -1438,19 +1439,19 @@ export default function App() {
                 </div>
 
                 {/* Progress Track */}
-                <div className="relative w-full h-2 rounded-full bg-slate-950 mt-4 overflow-hidden border border-slate-800/80">
+                <div className="relative w-full h-2 rounded-full bg-[#131314] mt-4 overflow-hidden border border-[#333537]">
                   <div
                     className={`h-full transition-all duration-300 ease-out rounded-full ${
                       transferProgress === 100
-                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-md shadow-emerald-500/50'
-                        : 'bg-gradient-to-r from-cyan-500 to-emerald-400'
+                        ? 'bg-[#81c995] shadow-md shadow-emerald-500/50'
+                        : 'bg-[#a8c7fa]'
                     }`}
                     style={{ width: `${transferProgress}%` }}
                   />
                 </div>
 
                 {/* Status Footer */}
-                <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono mt-3">
+                <div className="flex items-center justify-between text-[11px] text-[#75777a] font-mono mt-3">
                   <span>{transferProgress === 100 ? '0 B/s' : transferSpeed}</span>
 
                   <div className="flex items-center gap-3">
@@ -1458,18 +1459,18 @@ export default function App() {
                       <button
                         type="button"
                         onClick={cancelTransfer}
-                        className="text-xs text-rose-400 hover:text-rose-300 transition-colors"
+                        className="text-xs text-[#f28b82] hover:text-rose-300 transition-colors"
                       >
                         Cancel
                       </button>
                     )}
                     {transferProgress === 100 ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-sans font-medium text-xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-[#81c995] border border-emerald-500/20 font-sans font-medium text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#81c995] animate-pulse"></span>
                         Complete
                       </span>
                     ) : (
-                      <span className="capitalize text-slate-400">
+                      <span className="capitalize text-[#9aa0a6]">
                         {transfer?.direction === 'sending' || role === 'initiator' ? 'Sending' : 'Receiving'}
                       </span>
                     )}

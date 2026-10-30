@@ -101,27 +101,27 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
       }}
     >
       <div
-        className="relative w-full max-w-sm rounded-2xl bg-slate-900 p-6 border border-slate-800 text-center shadow-2xl modal-card"
+        className="relative w-full max-w-sm rounded-2xl bg-[#1e1f20] p-6 border border-[#333537] text-center shadow-2xl modal-card"
         style={{
           position: 'relative',
           width: '100%',
           maxWidth: '384px',
           borderRadius: '16px',
-          backgroundColor: '#0f172a',
+          backgroundColor: '#1e1f20',
           padding: '1.5rem',
-          border: '1px solid #1e293b',
+          border: '1px solid #333537',
           textAlign: 'center'
         }}
       >
         <h3
-          className="text-lg font-semibold text-white mb-1"
-          style={{ fontSize: '1.125rem', fontWeight: 600, color: '#fff', marginBottom: '0.25rem' }}
+          className="text-lg font-semibold text-[#e3e3e3] mb-1"
+          style={{ fontSize: '1.125rem', fontWeight: 600, color: '#e3e3e3', marginBottom: '0.25rem' }}
         >
           Scan QR Code
         </h3>
         <p
-          className="text-xs text-slate-400 mb-4"
-          style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '1rem' }}
+          className="text-xs text-[#9aa0a6] mb-4"
+          style={{ fontSize: '0.75rem', color: '#9aa0a6', marginBottom: '1rem' }}
         >
           Point your camera at the other screen
         </p>
@@ -134,14 +134,14 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess, onResul
 
         <button
           onClick={onClose}
-          className="mt-4 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium text-slate-300 transition-colors button button-secondary"
+          className="mt-4 w-full py-2.5 rounded-xl bg-[#282a2c] hover:bg-[#333537] text-sm font-medium text-[#e3e3e3] transition-colors button button-secondary"
           style={{
             marginTop: '1rem',
             width: '100%',
             padding: '0.625rem 0',
             borderRadius: '12px',
-            backgroundColor: '#1e293b',
-            color: '#cbd5e1',
+            backgroundColor: '#282a2c',
+            color: '#e3e3e3',
             fontSize: '0.875rem',
             fontWeight: 500,
             border: 'none',
