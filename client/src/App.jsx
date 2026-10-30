@@ -1342,7 +1342,7 @@ export default function App() {
           <section className="connected-view bg-[#1e1f20] border border-[#333537]">
             <div className="connected-header">
               <div>
-                <div className="section-kicker text-[#a8c7fa]">
+                <div className="section-kicker text-emerald-400">
                   {isChannelReady ? 'Secure bridge established' : 'Direct Link Negotiation'}
                 </div>
                 <h2 className="text-[#e3e3e3]">
@@ -1478,7 +1478,7 @@ export default function App() {
                 </div>
               </div>
             )}
-            <div className="transfer-footnote"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
+            <div className="transfer-footnote text-[#75777a]"><span>▣</span> Your browser writes incoming chunks straight to disk. Large files never need to fit in memory.</div>
           </section>
         )}
 
